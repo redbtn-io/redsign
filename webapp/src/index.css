@@ -1,0 +1,12 @@
+html {
+  --primary-color: red;
+}
+
+body {
+  margin: 0;
+  overflow: hidden;
+}
+
+.signature-canvas {
+  border: 1px solid var(--primary-color);
+}

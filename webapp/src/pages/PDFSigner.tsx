@@ -3,12 +3,11 @@ import '../utils/setupPdf'; // import worker setup
 
 import { PDFView } from '../components/PDFView';
 import { Breakpoint } from '../types/breakpoint';
+import { getPdfUrlFromQuery } from '../utils/pdfUrl';
 
 export default function PDFSigner({ breakpoint }: { breakpoint: Breakpoint | null }) {
-    
-  
-  const query = new URLSearchParams(window.location.search);
-  const pdfUrl = query.get('doc') || '/workspaces/redsign/By-Laws.pdf';
+
+  const pdfUrl = getPdfUrlFromQuery(window.location.search);
   const [pdfFile, setPdfFile] = useState<File | null>(
     pdfUrl ? new File([], pdfUrl) : null
   );

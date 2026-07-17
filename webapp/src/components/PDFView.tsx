@@ -11,6 +11,7 @@ export function PDFView(props: any) {
     const { pdfUrl, breakpoint } = props;
     const [numPages, setNumPages] = useState<number | null>(null);
     const [currentPage, setCurrentPage] = useState<number>(1);
+    const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
 
 
     const [adding, setAdding] = useState(false);
@@ -22,6 +23,10 @@ export function PDFView(props: any) {
     };
     const onLoadError = (error: any) => {
       console.error('Error loading PDF: ', error);
+      const message = (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string')
+        ? error.message
+        : 'Unable to load this PDF document.';
+      setLoadErrorMessage(message);
     };
 
       function pdfSize() {
@@ -39,6 +44,15 @@ export function PDFView(props: any) {
           default:
             return 600;
         }
+      }
+
+      if (loadErrorMessage) {
+        return (
+          <div role="alert" style={{ margin: '40px auto', textAlign: 'center', maxWidth: '600px' }}>
+            <p>Unable to load the PDF document.</p>
+            <p>{loadErrorMessage}</p>
+          </div>
+        )
       }
   
   

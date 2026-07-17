@@ -1,4 +1,3 @@
-import React, { useState } from 'react';
 import '../utils/setupPdf'; // import worker setup
 
 import { PDFView } from '../components/PDFView';
@@ -8,9 +7,7 @@ import { getPdfUrlFromQuery } from '../utils/pdfUrl';
 export default function PDFSigner({ breakpoint }: { breakpoint: Breakpoint | null }) {
 
   const pdfUrl = getPdfUrlFromQuery(window.location.search);
-  const [pdfFile, setPdfFile] = useState<File | null>(
-    pdfUrl ? new File([], pdfUrl) : null
-  );
+  const pdfFile: File | null = pdfUrl ? new File([], pdfUrl) : null;
 
 
   return (

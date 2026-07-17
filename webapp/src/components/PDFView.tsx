@@ -44,8 +44,8 @@ export function PDFView(props: any) {
   
     return (
       <div style={{ margin: '0 auto', maxWidth: '100%', width: 'fit-content'}}>
-      <Document file={pdfUrl} onLoadSuccess={onLoadSuccess}>
-        <ZoomablePDF {...{pdfUrl, onLoadSuccess, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal}} />
+      <Document file={pdfUrl} onLoadSuccess={onLoadSuccess} onLoadError={onLoadError}>
+        <ZoomablePDF {...{pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal}} />
       </Document>
       <PDFPageButtons {...{ currentPage, setCurrentPage, numPages, adding, setAdding }} />
     </div>
@@ -53,7 +53,7 @@ export function PDFView(props: any) {
   }
 
   function ZoomablePDF(props: any) {
-    const { pdfUrl, onLoadSuccess, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal } = props; 
+    const { pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal } = props; 
   
     return (
       <TransformWrapper 
@@ -62,7 +62,7 @@ export function PDFView(props: any) {
       doubleClick={breakpoint == 'sm' ? { excluded: ['drag-exclude'] } : {disabled: true}}
       >
         <TransformComponent>
-          <Document file={pdfUrl} onLoadSuccess={onLoadSuccess}>
+          <Document file={pdfUrl} onLoadSuccess={onLoadSuccess} onLoadError={onLoadError}>
             <PDFSignature {...{ currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint }} />
           </Document>
         </TransformComponent>

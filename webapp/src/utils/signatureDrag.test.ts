@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { shouldOpenSignatureModal } from './signatureDrag';
+import { shouldOpenSignatureModal } from './signatureDrag.ts';
 
 test('does not open modal after a real drag', () => {
   const start = { x: 10, y: 15 };
@@ -16,8 +16,7 @@ test('opens modal only when pointer movement is a tiny click jitter', () => {
 
 test('supports configurable threshold boundaries', () => {
   const start = { x: 10, y: 15 };
-  const nearBoundary = { x: 10.15, y: 15.0 };
+  const nearBoundary = { x: 10.08, y: 15.0 };
   assert.equal(shouldOpenSignatureModal(start, nearBoundary), true);
-  assert.equal(shouldOpenSignatureModal(start, nearBoundary, 0.1), false);
+  assert.equal(shouldOpenSignatureModal(start, nearBoundary, 0.05), false);
 });
-

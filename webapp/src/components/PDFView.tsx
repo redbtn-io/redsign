@@ -23,10 +23,6 @@ export function PDFView(props: any) {
     const onLoadError = (error: any) => {
       console.error('Error loading PDF: ', error);
     };
-    const onDocumentLoadSuccess = ({ numPages }: { numPages: number }) => {
-      setNumPages(numPages);
-    };
-
 
       function pdfSize() {
         switch (breakpoint) {
@@ -48,8 +44,8 @@ export function PDFView(props: any) {
   
     return (
       <div style={{ margin: '0 auto', maxWidth: '100%', width: 'fit-content'}}>
-      <Document file={pdfUrl} onLoadSuccess={onLoadSuccess}>
-        <ZoomablePDF {...{pdfUrl, onLoadSuccess, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal}} />
+      <Document file={pdfUrl} onLoadSuccess={onLoadSuccess} onLoadError={onLoadError}>
+        <ZoomablePDF {...{pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal}} />
       </Document>
       <PDFPageButtons {...{ currentPage, setCurrentPage, numPages, adding, setAdding }} />
     </div>
@@ -57,7 +53,7 @@ export function PDFView(props: any) {
   }
 
   function ZoomablePDF(props: any) {
-    const { pdfUrl, onLoadSuccess, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal } = props; 
+    const { pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal } = props; 
   
     return (
       <TransformWrapper 
@@ -66,46 +62,13 @@ export function PDFView(props: any) {
       doubleClick={breakpoint == 'sm' ? { excluded: ['drag-exclude'] } : {disabled: true}}
       >
         <TransformComponent>
-          <Document file={pdfUrl} onLoadSuccess={onLoadSuccess}>
+          <Document file={pdfUrl} onLoadSuccess={onLoadSuccess} onLoadError={onLoadError}>
             <PDFSignature {...{ currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint }} />
           </Document>
         </TransformComponent>
       </TransformWrapper>
     );
   }
-
-  function AddSignatures(props: any) {
-
-    const { currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint } = props;
-
-    type SignatureField = {
-      id: string;
-      page: number;
-      x: number;
-      y: number;
-      signed?: string;
-    }
-    const [fields, setFields] = useState<SignatureField[]>([]);
-
-    const containerRef = useRef<HTMLDivElement | null>(null);
-    
-    const handlePageClick = (e: React.MouseEvent) => {
-      const container = containerRef.current;
-      if (container && adding) {
-        const rect = container.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
-
-        setFields((prevFields) => [
-          ...prevFields,
-          { id: crypto.randomUUID(), page:currentPage, x, y },
-        ]);
-        setAdding(false);
-      }
-    }
-
-  }
-
   function PDFSignature(props: any) {
 
     type SignatureField = {

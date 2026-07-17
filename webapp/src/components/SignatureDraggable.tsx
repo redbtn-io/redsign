@@ -1,5 +1,6 @@
-import { CSSProperties, useRef, useState } from 'react';
+import { CSSProperties, useRef } from 'react';
 import { Rnd } from 'react-rnd';
+import { shouldOpenSignatureModal } from '../utils/signatureDrag';
 
 type Props = {
     x: number;
@@ -14,16 +15,7 @@ type Props = {
 
 export default function SignatureDraggable({ x, y, width = 120, height = 40, onUpdate, id, setModal, signed }: Props) {
 
-    const [lastPos, setLastPos] = useState({ x: 0, y: 0 });
-    const [firstDrag, setFirstDrag] = useState(false);
-    const dragged = useRef(false);
-
-    const clickedNotDragged = (pos: any) => {
-        if (Math.abs(pos.x - lastPos.x) < 0.1 && Math.abs(pos.y - lastPos.y) < 0.1 || firstDrag) {
-            setModal(id);
-            setFirstDrag(false);
-        }
-    }
+    const dragStartPos = useRef<{ x: number; y: number } | null>(null);
 
     const style: CSSProperties = signed ? {
       pointerEvents: 'auto',
@@ -50,18 +42,18 @@ export default function SignatureDraggable({ x, y, width = 120, height = 40, onU
         height,
       }}
       bounds="parent"
-      onDragStart={(e:any) => {
+      onDragStart={(e:any, data) => {
         e.stopPropagation();
-        if (!dragged.current) {
-            setFirstDrag(true);
-            dragged.current = true;
-        }
+        dragStartPos.current = { x: data.x, y: data.y };
       }}
       onDragStop={(_, d) => {
         const pos = { x: d.x, y: d.y };
         onUpdate({ x: d.x, y: d.y, width, height })
-        setLastPos({ x: d.x, y: d.y });
-        clickedNotDragged(pos);
+        const start = dragStartPos.current ?? pos;
+        if (shouldOpenSignatureModal(start, pos) && id) {
+          setModal(id);
+        }
+        dragStartPos.current = null;
       }}
       onResizeStop={(_, __, ref, ___, pos) => {
         onUpdate({

@@ -22,6 +22,10 @@ test('returns a bare same-origin relative filename', () => {
   assert.equal(getPdfUrlFromQuery('?doc=contract.pdf', ORIGIN), 'contract.pdf');
 });
 
+test('rejects same-origin documents that are not PDFs', () => {
+  assert.equal(getPdfUrlFromQuery('?doc=%2Ffiles%2Fcontract.png', ORIGIN), null);
+});
+
 test('returns null when no doc query param is present', () => {
   assert.equal(getPdfUrlFromQuery('', ORIGIN), null);
   assert.equal(getPdfUrlFromQuery('?other=1', ORIGIN), null);

@@ -4,6 +4,7 @@ import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
 import { Button, Modal } from "xiro-ui";
 import { SignatureCanvas } from "./SignatureCanvas";
 import SignatureDraggable from "./SignatureDraggable";
+import { getNextPage } from "./pdfViewState";
 
 
 export function PDFView(props: any) {
@@ -222,12 +223,12 @@ export function PDFView(props: any) {
       </Button>
       <AddSignatureButton {...{ adding, setAdding }} />
       <Button 
-        onClick={() => setCurrentPage((prev: number) => Math.min(prev + 1, numPages))}
-        disabled={currentPage === numPages}
+      onClick={() => setCurrentPage((prev: number) => getNextPage(prev, numPages))}
+      disabled={numPages === null || currentPage === numPages}
     >
         Next
     </Button>
-      </div>)
+  </div>)
   }
 
   function AddSignatureButton(props: any) {

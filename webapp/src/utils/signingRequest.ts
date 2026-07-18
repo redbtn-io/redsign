@@ -30,7 +30,7 @@ function getDefaultTokenStore(): SigningRequestTokenStore {
   return {
     hasUsedToken: (tokenId) => {
       try {
-        return window.localStorage.getItem(storageKey(tokenId)) === '1';
+        return window.localStorage.getItem(storageKey(tokenId)) !== null;
       } catch {
         return false;
       }

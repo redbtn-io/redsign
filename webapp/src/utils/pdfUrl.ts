@@ -38,6 +38,7 @@ export function getPdfUrlFromQuery(
 
   if (resolved.protocol !== 'http:' && resolved.protocol !== 'https:') return null;
   if (resolved.origin !== origin) return null;
+  if (!resolved.pathname.toLowerCase().endsWith('.pdf')) return null;
 
   return raw;
 }

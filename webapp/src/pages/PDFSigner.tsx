@@ -1,7 +1,6 @@
 import '../utils/setupPdf'; // import worker setup
 
 import { PDFView } from '../components/PDFView';
-import { useEffect } from 'react';
 import { Breakpoint } from '../types/breakpoint';
 import { getPdfUrlFromQuery } from '../utils/pdfUrl';
 import {
@@ -15,11 +14,11 @@ export default function PDFSigner({ breakpoint }: { breakpoint: Breakpoint | nul
   const signingTokenState = getSigningRequestTokenState(window.location.search);
   const pdfFile: File | null = pdfUrl ? new File([], pdfUrl) : null;
 
-  useEffect(() => {
+  const completeSigningRequest = () => {
     if (signingTokenState.status === 'valid' && signingTokenState.token) {
       markSigningRequestTokenUsed(signingTokenState.token);
     }
-  }, [signingTokenState]);
+  };
 
   if (signingTokenState.status === 'missing') {
     if (!pdfUrl) {
@@ -68,7 +67,7 @@ export default function PDFSigner({ breakpoint }: { breakpoint: Breakpoint | nul
 
         <div style={{ marginTop: '20px' }}>
           <h3>PDF Preview:</h3>
-          <PDFView {...{pdfUrl, breakpoint}} />
+          <PDFView {...{pdfUrl, breakpoint}} onSigningComplete={completeSigningRequest} />
         </div>
 
         {pdfFile && (

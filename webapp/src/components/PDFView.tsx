@@ -8,7 +8,7 @@ import SignatureDraggable from "./SignatureDraggable";
 
 export function PDFView(props: any) {
 
-    const { pdfUrl, breakpoint } = props;
+    const { pdfUrl, breakpoint, onSigningComplete } = props;
     const [numPages, setNumPages] = useState<number | null>(null);
     const [currentPage, setCurrentPage] = useState<number>(1);
     const [loadErrorMessage, setLoadErrorMessage] = useState<string | null>(null);
@@ -59,7 +59,7 @@ export function PDFView(props: any) {
     return (
       <div style={{ margin: '0 auto', maxWidth: '100%', width: 'fit-content'}}>
       <Document file={pdfUrl} onLoadSuccess={onLoadSuccess} onLoadError={onLoadError}>
-        <ZoomablePDF {...{pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal}} />
+        <ZoomablePDF {...{pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal, onSigningComplete}} />
       </Document>
       <PDFPageButtons {...{ currentPage, setCurrentPage, numPages, adding, setAdding }} />
     </div>
@@ -67,7 +67,7 @@ export function PDFView(props: any) {
   }
 
   function ZoomablePDF(props: any) {
-    const { pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal } = props; 
+    const { pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal, onSigningComplete } = props;
   
     return (
       <TransformWrapper 
@@ -77,7 +77,7 @@ export function PDFView(props: any) {
       >
         <TransformComponent>
           <Document file={pdfUrl} onLoadSuccess={onLoadSuccess} onLoadError={onLoadError}>
-            <PDFSignature {...{ currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint }} />
+            <PDFSignature {...{ currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint, onSigningComplete }} />
           </Document>
         </TransformComponent>
       </TransformWrapper>
@@ -93,7 +93,7 @@ export function PDFView(props: any) {
       signed?: string;
     }
 
-    const { currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint } = props;
+    const { currentPage, pdfSize, pdfUrl, adding, setAdding, setModal, modal, breakpoint, onSigningComplete } = props;
 
     const [fields, setFields] = useState<SignatureField[]>([]);
     const [defaultValue, setDefaultValue] = useState<string | undefined>();
@@ -192,6 +192,7 @@ export function PDFView(props: any) {
                     setModal(false)
                     setDefaultValue(d);
                     setFields(prevFields => prevFields.map(field => field.id === modal ? {...field, signed: d} : field))
+                    onSigningComplete?.();
                   }} 
                   defaultValue={defaultValue} />
               </div>

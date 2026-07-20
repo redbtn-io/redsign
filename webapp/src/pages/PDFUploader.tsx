@@ -46,7 +46,12 @@ export default function PDFUploader({ breakpoint }: { breakpoint: Breakpoint | n
   );
 };
 
-function UploadButton(props: any) {
+type UploadButtonProps = {
+  handleUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+  text?: string;
+};
+
+function UploadButton(props: UploadButtonProps) {
 
   const { handleUpload, text } = props;
 
@@ -68,8 +73,12 @@ function UploadButton(props: any) {
     </>)
 }
 
-function PDFUpload(props: any) {
-  
+type PDFUploadProps = {
+  handleUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
+};
+
+function PDFUpload(props: PDFUploadProps) {
+
   const { handleUpload } = props;
 
   return (<>

@@ -22,7 +22,7 @@
     "react-rnd": "^10.5.2",
     "react-router": "^7.5.0",
     "react-zoom-pan-pinch": "^3.7.0",
-    "xiro-ui": "file:../modules/xiro-ui-0.0.1.tgz"
+    "xiro-ui": "file:./vendor/xiro-ui"
   },
   "devDependencies": {
     "@eslint/js": "^9.21.0",

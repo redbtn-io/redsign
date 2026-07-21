@@ -1,5 +1,12 @@
+@import '@redbtn/redstyle/tokens.css';
+@import '@redbtn/redstyle/base.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 html {
-  --primary-color: red;
+  --primary-color: var(--accent);
 }
 
 body {

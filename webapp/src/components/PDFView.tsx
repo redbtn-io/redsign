@@ -4,9 +4,15 @@ import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
 import { Button, Modal } from "xiro-ui";
 import { SignatureCanvas } from "./SignatureCanvas";
 import SignatureDraggable from "./SignatureDraggable";
+import { Breakpoint } from "../types/breakpoint";
 
+type PDFViewProps = {
+  pdfUrl: string;
+  breakpoint: Breakpoint | null;
+  onSigningComplete?: () => void;
+};
 
-export function PDFView(props: any) {
+export function PDFView(props: PDFViewProps) {
 
     const { pdfUrl, breakpoint, onSigningComplete } = props;
     const [numPages, setNumPages] = useState<number | null>(null);
@@ -15,13 +21,13 @@ export function PDFView(props: any) {
 
 
     const [adding, setAdding] = useState(false);
-    const [modal, setModal] = useState(false);
+    const [modal, setModal] = useState<boolean | string>(false);
   
   
     const onLoadSuccess = ({ numPages }: { numPages: number }) => {
       setNumPages(numPages);
     };
-    const onLoadError = (error: any) => {
+    const onLoadError = (error: Error) => {
       console.error('Error loading PDF: ', error);
       const message = (error && typeof error === 'object' && 'message' in error && typeof error.message === 'string')
         ? error.message
@@ -66,7 +72,21 @@ export function PDFView(props: any) {
     )
   }
 
-  function ZoomablePDF(props: any) {
+  type ZoomablePDFProps = {
+    pdfUrl: string;
+    onLoadSuccess: (document: { numPages: number }) => void;
+    onLoadError: (error: Error) => void;
+    currentPage: number;
+    pdfSize: () => number;
+    breakpoint: Breakpoint | null;
+    adding: boolean;
+    setAdding: React.Dispatch<React.SetStateAction<boolean>>;
+    setModal: React.Dispatch<React.SetStateAction<boolean | string>>;
+    modal: boolean | string;
+    onSigningComplete?: () => void;
+  };
+
+  function ZoomablePDF(props: ZoomablePDFProps) {
     const { pdfUrl, onLoadSuccess, onLoadError, currentPage, pdfSize, breakpoint, adding, setAdding, setModal, modal, onSigningComplete } = props;
   
     return (
@@ -83,7 +103,19 @@ export function PDFView(props: any) {
       </TransformWrapper>
     );
   }
-  function PDFSignature(props: any) {
+  type PDFSignatureProps = {
+    currentPage: number;
+    pdfSize: () => number;
+    pdfUrl: string;
+    adding: boolean;
+    setAdding: React.Dispatch<React.SetStateAction<boolean>>;
+    setModal: React.Dispatch<React.SetStateAction<boolean | string>>;
+    modal: boolean | string;
+    breakpoint: Breakpoint | null;
+    onSigningComplete?: () => void;
+  };
+
+  function PDFSignature(props: PDFSignatureProps) {
 
     type SignatureField = {
       id: string;
@@ -204,7 +236,15 @@ export function PDFView(props: any) {
     )
   }
   
-  function PDFPageButtons(props: any) {
+  type PDFPageButtonsProps = {
+    currentPage: number;
+    setCurrentPage: React.Dispatch<React.SetStateAction<number>>;
+    numPages: number | null;
+    adding: boolean;
+    setAdding: React.Dispatch<React.SetStateAction<boolean>>;
+  };
+
+  function PDFPageButtons(props: PDFPageButtonsProps) {
     const { currentPage, setCurrentPage, numPages, adding, setAdding, } = props;
   
     return (
@@ -223,7 +263,7 @@ export function PDFView(props: any) {
       </Button>
       <AddSignatureButton {...{ adding, setAdding }} />
       <Button 
-        onClick={() => setCurrentPage((prev: number) => Math.min(prev + 1, numPages))}
+        onClick={() => setCurrentPage((prev: number) => Math.min(prev + 1, numPages ?? prev + 1))}
         disabled={currentPage === numPages}
     >
         Next
@@ -231,7 +271,12 @@ export function PDFView(props: any) {
       </div>)
   }
 
-  function AddSignatureButton(props: any) {
+  type AddSignatureButtonProps = {
+    adding: boolean;
+    setAdding: React.Dispatch<React.SetStateAction<boolean>>;
+  };
+
+  function AddSignatureButton(props: AddSignatureButtonProps) {
     const { adding, setAdding, } = props;
     return (
       <Button

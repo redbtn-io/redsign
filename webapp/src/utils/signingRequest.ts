@@ -39,6 +39,7 @@ function getDefaultTokenStore(): SigningRequestTokenStore {
       try {
         window.localStorage.setItem(storageKey(tokenId), String(Date.now() + DEFAULT_VALID_ID_TTL_SAFETY_MARGIN_MS));
       } catch {
+        // Storage can be unavailable in privacy-restricted browser contexts.
       }
     },
   };

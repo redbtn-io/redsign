@@ -1,4 +1,4 @@
-import { Main, Nav } from "xiro-ui";
+import { AppShell } from '@redbtn/redstyle';
 import PDFUploader from './pages/PDFUploader';
 import { useEffect, useState } from "react";
 import { Breakpoint } from "./types/breakpoint";
@@ -30,18 +30,18 @@ export default function App () {
 
 
 
-  return (<>
-    
-    <Nav fixed styles={{ padding: '0 10px', boxShadow: '0px 4px 6px rgba(0, 0, 0, 0.1)' }}>
-        Redsign
-    </Nav>
-      <Main styles={{ bottom: '0', padding: '10px' }}>
+  return (
+    <AppShell>
+      <AppShell.Header sticky={false} className="border-b border-border bg-bg-elevated px-4 py-3 shadow-sm">
+        <span className="text-base font-semibold text-text-primary">Redsign</span>
+      </AppShell.Header>
+      <AppShell.Content scroll={false} className="p-4">
         <Routes>
           <Route path="/" element={<PDFUploader {...{breakpoint}}/>} />
           <Route path='/sign' element={<PDFSigner {...{breakpoint}}/>} />
         </Routes>
-      </Main>
-  </>
+      </AppShell.Content>
+    </AppShell>
 
   );
 };

@@ -40,7 +40,7 @@ export const SignatureCanvas = ({
       img.src = defaultValue;
     }
 
-  }, [defaultValue]);
+  }, [defaultValue, height, width]);
 
   const getCanvasOffset = (e: MouseEvent | TouchEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();

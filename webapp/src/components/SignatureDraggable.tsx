@@ -1,11 +1,11 @@
-import { CSSProperties, useRef } from 'react';
-import { Rnd } from 'react-rnd';
+import { CSSProperties, Dispatch, PointerEvent as ReactPointerEvent, SetStateAction, useRef } from 'react';
+import { DraggableData, Rnd } from 'react-rnd';
 import { shouldOpenSignatureModal } from '../utils/signatureDrag';
 
 type Props = {
     x: number;
     y: number;
-    setModal: any;
+    setModal: Dispatch<SetStateAction<boolean | string>>;
     signed?: string;
     id?: string;
     width?: number;
@@ -42,7 +42,7 @@ export default function SignatureDraggable({ x, y, width = 120, height = 40, onU
         height,
       }}
       bounds="parent"
-      onDragStart={(e:any, data) => {
+      onDragStart={(e: MouseEvent, data: DraggableData) => {
         e.stopPropagation();
         dragStartPos.current = { x: data.x, y: data.y };
       }}
@@ -63,7 +63,7 @@ export default function SignatureDraggable({ x, y, width = 120, height = 40, onU
           height: parseFloat(ref.style.height),
         });
       }}
-      onPointerDown={(e: any) => {
+      onPointerDown={(e: ReactPointerEvent<HTMLDivElement>) => {
         e.stopPropagation();
       }}
 

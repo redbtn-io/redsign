@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Document, Page } from "react-pdf";
 import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
-import { Button, Modal } from "xiro-ui";
+import { Button, Dialog, DialogContent } from "@redbtn/redstyle";
 import { SignatureCanvas } from "./SignatureCanvas";
 import SignatureDraggable from "./SignatureDraggable";
 import { Breakpoint } from "../types/breakpoint";
@@ -211,12 +211,21 @@ export function PDFView(props: PDFViewProps) {
             />
           ))}
           
-            <Modal 
-              show={modal}
-              onClose={() => setModal(false)}
-              styles={{ width: '100%', maxWidth: '600px', margin: '0 auto', pointerEvents: 'auto' }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width:'100%' }} className="drag-exclude">
+            <Dialog open={Boolean(modal)} onOpenChange={(open) => setModal(open)}>
+              <DialogContent
+                className="p-0"
+              >
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  width: `${modalWidth()}px`,
+                  maxWidth: '100%',
+                  pointerEvents: 'auto',
+                }}
+                className="drag-exclude"
+              >
                 <SignatureCanvas
                   width={modalWidth()}
                   onCancel={(d)=>d ? setModal(false) : removeSignature()} 
@@ -228,8 +237,8 @@ export function PDFView(props: PDFViewProps) {
                   }} 
                   defaultValue={defaultValue} />
               </div>
-
-            </Modal>
+              </DialogContent>
+            </Dialog>
         </div>
       </div>
     </>
@@ -280,7 +289,6 @@ export function PDFView(props: PDFViewProps) {
     const { adding, setAdding, } = props;
     return (
       <Button
-        styles={{ pointerEvents: 'auto' }}
         onClick={() => {
           if (!adding) {
             setAdding(true);

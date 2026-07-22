@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { Button } from 'xiro-ui';
+import { Button } from '@redbtn/redstyle';
 
 type SignatureCanvasProps = {
   width?: number;

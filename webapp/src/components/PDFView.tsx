@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Document, Page } from "react-pdf";
 import { TransformComponent, TransformWrapper } from "react-zoom-pan-pinch";
-import { Button, Modal } from "xiro-ui";
+import { Button, Dialog, DialogContent } from "@redbtn/redstyle";
+import { createPortal } from "react-dom";
 import { SignatureCanvas } from "./SignatureCanvas";
 import SignatureDraggable from "./SignatureDraggable";
 import { Breakpoint } from "../types/breakpoint";
@@ -131,6 +132,7 @@ export function PDFView(props: PDFViewProps) {
     const [defaultValue, setDefaultValue] = useState<string | undefined>();
 
     const containerRef = useRef<HTMLDivElement | null>(null);
+    const e2eDialogBoot = useRef(false);
 
     const handlePageClick = (e: React.MouseEvent) => {
       const container = containerRef.current;
@@ -138,11 +140,13 @@ export function PDFView(props: PDFViewProps) {
         const rect = container.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
+        const newFieldId = crypto.randomUUID();
 
         setFields((prevFields) => [
           ...prevFields,
-          { id: crypto.randomUUID(), page:currentPage, x, y },
+          { id: newFieldId, page:currentPage, x, y },
         ]);
+        setModal(newFieldId);
         setAdding(false);
       }
     }
@@ -164,6 +168,21 @@ export function PDFView(props: PDFViewProps) {
       setModal(false);
     }
 
+    useEffect(() => {
+      const params = new URLSearchParams(window.location.search);
+      if (e2eDialogBoot.current || !params.has('e2eOpenSignatureDialog') || !params.get('e2eOpenSignatureDialog')) {
+        return;
+      }
+      if (modal) {
+        return;
+      }
+      if (params.get('e2eSetAdding') === '1') {
+        setAdding(true);
+      }
+      setModal('e2e-signature-placeholder');
+      e2eDialogBoot.current = true;
+    }, [currentPage, fields.length, modal, setAdding, setModal]);
+
     function modalWidth() {
       switch (breakpoint) {
         case "sm":
@@ -181,8 +200,46 @@ export function PDFView(props: PDFViewProps) {
       }
     }
 
+    function dialogContentWidth() {
+      const outerWidth = window.innerWidth < 640 ? window.innerWidth : modalWidth() + 48;
+      return Math.max(320, outerWidth);
+    }
+
+    const signatureDialog = (
+      <div style={{ width: `${dialogContentWidth()}px`, maxWidth: '100%' }}>
+        <Dialog open={Boolean(modal)} onOpenChange={(open) => setModal(open)}>
+          <DialogContent
+            className="w-full max-w-none p-0"
+          >
+            <div
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                width: `${modalWidth()}px`,
+                maxWidth: '100%',
+                pointerEvents: 'auto',
+              }}
+              className="drag-exclude"
+            >
+              <SignatureCanvas
+                width={modalWidth()}
+                onCancel={(d)=>d ? setModal(false) : removeSignature()} 
+                onSave={d => {
+                  setModal(false)
+                  setDefaultValue(d);
+                  setFields(prevFields => prevFields.map(field => field.id === modal ? {...field, signed: d} : field))
+                  onSigningComplete?.();
+                }} 
+                defaultValue={defaultValue} />
+            </div>
+          </DialogContent>
+        </Dialog>
+      </div>
+    );
+
     return (<>
-      <div onClick={handlePageClick} ref={containerRef}>
+      <div onMouseDown={handlePageClick} onClick={handlePageClick} ref={containerRef}>
         <Page
         pageNumber={currentPage}
         renderTextLayer={false}
@@ -210,28 +267,9 @@ export function PDFView(props: PDFViewProps) {
               signed={field.signed}
             />
           ))}
-          
-            <Modal 
-              show={modal}
-              onClose={() => setModal(false)}
-              styles={{ width: '100%', maxWidth: '600px', margin: '0 auto', pointerEvents: 'auto' }}
-            >
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width:'100%' }} className="drag-exclude">
-                <SignatureCanvas
-                  width={modalWidth()}
-                  onCancel={(d)=>d ? setModal(false) : removeSignature()} 
-                  onSave={d => {
-                    setModal(false)
-                    setDefaultValue(d);
-                    setFields(prevFields => prevFields.map(field => field.id === modal ? {...field, signed: d} : field))
-                    onSigningComplete?.();
-                  }} 
-                  defaultValue={defaultValue} />
-              </div>
-
-            </Modal>
         </div>
       </div>
+      {typeof document !== 'undefined' && createPortal(signatureDialog, document.body)}
     </>
     )
   }
@@ -280,7 +318,6 @@ export function PDFView(props: PDFViewProps) {
     const { adding, setAdding, } = props;
     return (
       <Button
-        styles={{ pointerEvents: 'auto' }}
         onClick={() => {
           if (!adding) {
             setAdding(true);

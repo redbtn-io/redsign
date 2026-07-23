@@ -14,6 +14,5 @@ test('shows an error state when PDF document fails to load', async ({ page }) =>
 
   const errorAlert = page.getByRole('alert');
   await expect(errorAlert).toBeVisible();
-  await expect(errorAlert).toHaveText(/Unable to load the PDF document/);
-  await expect(errorAlert).toContainText(/Unable to load this PDF document/i);
+  await expect(errorAlert).toHaveText(/Unable to load the PDF document\./);
 });

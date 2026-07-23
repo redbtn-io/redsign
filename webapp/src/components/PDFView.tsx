@@ -224,13 +224,13 @@ export function PDFView(props: PDFViewProps) {
             >
               <SignatureCanvas
                 width={modalWidth()}
-                onCancel={(d)=>d ? setModal(false) : removeSignature()} 
+                onCancel={(d)=>d ? setModal(false) : removeSignature()}
                 onSave={d => {
                   setModal(false)
                   setDefaultValue(d);
                   setFields(prevFields => prevFields.map(field => field.id === modal ? {...field, signed: d} : field))
                   onSigningComplete?.();
-                }} 
+                }}
                 defaultValue={defaultValue} />
             </div>
           </DialogContent>
@@ -300,7 +300,7 @@ export function PDFView(props: PDFViewProps) {
         Previous
       </Button>
       <AddSignatureButton {...{ adding, setAdding }} />
-      <Button 
+      <Button
         onClick={() => setCurrentPage((prev: number) => Math.min(prev + 1, numPages ?? prev + 1))}
         disabled={currentPage === numPages}
     >

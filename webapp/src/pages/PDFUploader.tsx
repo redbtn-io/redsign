@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } from '@redbtn/redstyle';
 import '../utils/setupPdf'; // import worker setup
 
 import { PDFView } from '../components/PDFView';
@@ -19,7 +20,7 @@ export default function PDFUploader({ breakpoint }: { breakpoint: Breakpoint | n
   };
 
   return (
-    <div>
+    <div className="mx-auto w-full max-w-xl">
       {!pdfUrl && (<>
         <PDFUpload handleUpload={handleUpload} />
         </>
@@ -27,13 +28,13 @@ export default function PDFUploader({ breakpoint }: { breakpoint: Breakpoint | n
 
       {pdfUrl && (<>
 
-        <div style={{ marginTop: '20px' }}>
+        <div className="mt-5">
           <h3>PDF Preview:</h3>
           <PDFView {...{pdfUrl, breakpoint}} />
         </div>
 
         {pdfFile && (
-          <div style={{ marginTop: '20px' }}>
+          <div className="mt-5">
             <p> <strong>PDF File:</strong> {pdfFile.name}</p>
             <p>{pdfFile.type} | {(pdfFile.size / 1024).toFixed(2)} KB</p>
             <UploadButton handleUpload={handleUpload} text={'Choose Another File'} />
@@ -64,12 +65,11 @@ function UploadButton(props: UploadButtonProps) {
         style={{ display: 'none' }}
         id="file-upload"
       />
-        <button
-        onClick={() => document.getElementById('file-upload')?.click()}
-        style={{ cursor: 'pointer', padding: '8px 16px', border: 'none', backgroundColor: 'red', color: '#fff', borderRadius: '4px' }}
+        <Button
+          onClick={() => document.getElementById('file-upload')?.click()}
         >
         {text || 'Upload PDF'}
-        </button>
+        </Button>
     </>)
 }
 
@@ -78,14 +78,17 @@ type PDFUploadProps = {
 };
 
 function PDFUpload(props: PDFUploadProps) {
-
   const { handleUpload } = props;
 
-  return (<>
-    <h2>Upload a PDF to Preview</h2>
-    <UploadButton handleUpload={handleUpload} />
-  </>)
+  return (
+    <Card>
+      <CardHeader className="gap-1.5">
+        <CardTitle>Upload a PDF to Preview</CardTitle>
+        <CardDescription>Select a PDF to begin reviewing and signing.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <UploadButton handleUpload={handleUpload} />
+      </CardContent>
+    </Card>
+  );
 }
-
-
-

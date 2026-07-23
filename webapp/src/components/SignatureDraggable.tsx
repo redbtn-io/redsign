@@ -1,5 +1,5 @@
-import { CSSProperties, Dispatch, PointerEvent as ReactPointerEvent, SetStateAction, useRef } from 'react';
-import { Rnd, DraggableData } from 'react-rnd';
+import { CSSProperties, Dispatch, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, SetStateAction, useRef } from 'react';
+import { DraggableData, Rnd } from 'react-rnd';
 import { shouldOpenSignatureModal } from '../utils/signatureDrag';
 
 type Props = {
@@ -33,7 +33,7 @@ export default function SignatureDraggable({ x, y, width = 120, height = 40, onU
       touchAction: 'none',
     }
 
-  return (
+    return (
     <Rnd
       default={{
         x,
@@ -66,10 +66,17 @@ export default function SignatureDraggable({ x, y, width = 120, height = 40, onU
       onPointerDown={(e: ReactPointerEvent<HTMLDivElement>) => {
         e.stopPropagation();
       }}
+      onClick={(e: ReactMouseEvent<HTMLDivElement>) => {
+        e.stopPropagation();
+        if (id) {
+          setModal(id);
+        }
+      }}
 
       style={style}
 
       className='drag-exclude'
+      data-testid="signature-field"
     >
       {signed ? <>
         <img

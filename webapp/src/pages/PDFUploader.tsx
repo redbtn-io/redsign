@@ -78,7 +78,6 @@ type PDFUploadProps = {
 };
 
 function PDFUpload(props: PDFUploadProps) {
-  
   const { handleUpload } = props;
 
   return (

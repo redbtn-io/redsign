@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect } from 'react';
-import { Button } from 'xiro-ui';
+import { Button } from '@redbtn/redstyle';
 
 type SignatureCanvasProps = {
   width?: number;
@@ -40,7 +40,7 @@ export const SignatureCanvas = ({
       img.src = defaultValue;
     }
 
-  }, [defaultValue]);
+  }, [defaultValue, height, width]);
 
   const getCanvasOffset = (e: MouseEvent | TouchEvent) => {
     const rect = canvasRef.current?.getBoundingClientRect();

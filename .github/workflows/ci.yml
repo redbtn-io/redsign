@@ -1,0 +1,118 @@
+name: CI
+
+# The verification gate for redsign. Runs the same sequence a reviewer would run
+# by hand: install → typecheck → lint → unit tests → end-to-end tests.
+#
+# Everything is scoped to webapp/ (see `defaults.run.working-directory`); the
+# repository root holds no buildable code.
+#
+# Promoting this workflow to a REQUIRED status check is a branch-protection
+# setting on the repository, not something a workflow file can do to itself.
+# That is a separate repo-settings follow-up.
+
+on:
+  pull_request:
+    branches: [beta, main]
+  push:
+    branches: [beta, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: webapp
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Leave no usable git push token on disk for the code below to find.
+          persist-credentials: false
+
+      # Node 22 is a floor, not a preference: `npm run test:unit` is
+      # `node --test 'src/**/*.test.ts'`, which needs both the test-runner glob
+      # (Node 22+) and default TypeScript type-stripping (Node 22.18+). Node 20
+      # fails outright — it cannot expand the glob and reports
+      # "Could not find '.../src/**/*.test.ts'".
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: webapp/package-lock.json
+
+      # webapp depends on @redbtn/redstyle, which lives on the private Verdaccio
+      # at registry.redbtn.io and 401s anonymously. Verdaccio wants BASIC auth:
+      # a long-lived username + base64 password (not a bearer token, so it does
+      # not expire), matching the shared read-only `redrun-pub` credential other
+      # redbtn repositories use.
+      #
+      # SECURITY: this workflow runs on `pull_request`, so it executes
+      # PR-controlled code. The credential must never be reachable by that code.
+      # Three properties keep it contained:
+      #   1) it is written to webapp/.npmrc, and the env vars carrying it are
+      #      scoped to this single step, so no later step inherits them;
+      #   2) the install runs with --ignore-scripts, so no dependency lifecycle
+      #      script executes while the credential is on disk; and
+      #   3) the file is deleted immediately after install — BEFORE any
+      #      PR-controlled step (typecheck, lint, tests) runs.
+      # GitHub withholds secrets from fork-originated pull requests entirely, so
+      # a fork PR fails at the guard below rather than installing.
+      - name: Authenticate to the @redbtn registry
+        env:
+          REDBTN_NPM_USER: ${{ secrets.REDBTN_NPM_USER }}
+          REDBTN_NPM_PASSWORD: ${{ secrets.REDBTN_NPM_PASSWORD }}
+        run: |
+          if [ -z "$REDBTN_NPM_USER" ] || [ -z "$REDBTN_NPM_PASSWORD" ]; then
+            echo "::error::REDBTN_NPM_USER / REDBTN_NPM_PASSWORD are unavailable, so the private @redbtn scope cannot be installed. GitHub does not pass secrets to fork-originated pull requests; push the branch to this repository instead." >&2
+            exit 1
+          fi
+          {
+            printf '@redbtn:registry=https://registry.redbtn.io/\n'
+            printf '//registry.redbtn.io/:username=%s\n' "$REDBTN_NPM_USER"
+            printf '//registry.redbtn.io/:_password=%s\n' "$REDBTN_NPM_PASSWORD"
+            printf '//registry.redbtn.io/:always-auth=true\n'
+          } > .npmrc
+
+      # --ignore-scripts: no PR-controlled dependency lifecycle script runs while
+      # the registry credential is present. Playwright's browsers are fetched by
+      # an explicit step further down rather than by a postinstall hook, and the
+      # native toolchain (@vitejs/plugin-react-swc) ships prebuilt binaries via
+      # platform optionalDependencies, so skipping install scripts changes
+      # nothing about what gets built.
+      - name: Install dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+
+      # From here on the credential is gone, so PR-controlled test and build code
+      # cannot read or exfiltrate it.
+      - name: Scrub the registry credential
+        if: always()
+        run: rm -f .npmrc
+
+      - name: Typecheck
+        run: npx tsc -b
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Unit tests
+        run: npm run test:unit
+
+      # playwright.config.ts declares no `projects`, so the suite runs on the
+      # default browser (Chromium) only. Installing just that browser keeps the
+      # step honest about what the tests actually exercise. It must run after
+      # `npm ci` so the browser build matches the installed Playwright version.
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # playwright.config.ts starts the Vite dev server itself via `webServer`,
+      # so there is no separate serve step.
+      - name: End-to-end tests
+        run: npm run test:e2e

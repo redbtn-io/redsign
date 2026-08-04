@@ -8,6 +8,7 @@ import { isValidSigningToken, type TurnSigner } from "./signing";
 export type SignerDoc = TurnSigner & {
   token?: string;
   values?: Record<string, string>;
+  viewedAt?: Date | null;
 };
 
 export type TokenHit = {

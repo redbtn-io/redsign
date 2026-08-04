@@ -1,6 +1,8 @@
 #!/usr/bin/env node
 // Deletes e2e-created envelopes (metadata.e2e: true) and their GridFS PDFs
-// (pdfs.files / pdfs.chunks by documentFileId / executedFileId).
+// (pdfs.files / pdfs.chunks by documentFileId / executedFileId), plus their
+// Phase 4 residue: webhook_deliveries and envelope_events rows keyed by the
+// envelope ids (collected BEFORE the envelopes are deleted).
 //
 // Reads MONGODB_URI from the environment, falling back to webapp/.env.local —
 // the same file `next dev` loads — so the cleanup always hits the same DB the
@@ -38,8 +40,18 @@ try {
       }
     }
   }
+  const ids = envelopes.map((env) => String(env._id));
+  const deliveries = ids.length
+    ? (await db.collection('webhook_deliveries').deleteMany({ envelopeId: { $in: ids } })).deletedCount
+    : 0;
+  const events = ids.length
+    ? (await db.collection('envelope_events').deleteMany({ envelopeId: { $in: ids } })).deletedCount
+    : 0;
   const r = await db.collection('envelopes').deleteMany({ 'metadata.e2e': true });
-  console.log(`cleanup-e2e-envelopes: removed ${r.deletedCount} envelope(s), ${filesDeleted} GridFS file(s)`);
+  console.log(
+    `cleanup-e2e-envelopes: removed ${r.deletedCount} envelope(s), ${filesDeleted} GridFS file(s), ` +
+      `${deliveries} webhook deliver(ies), ${events} event(s)`
+  );
 } finally {
   await client.close();
 }

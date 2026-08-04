@@ -4,6 +4,7 @@ import { lookupEnvelopeByToken } from "@/lib/signaccess";
 import { readPdfBuffer, storePdf } from "@/lib/envelopes";
 import { buildExecutedPdf, type FlattenSigner } from "@/lib/flatten";
 import { firstHeaderValue } from "@/lib/http";
+import { emitEnvelopeEvent } from "@/lib/webhooks";
 import {
   MAX_TOTAL_VALUES_BYTES,
   fieldValueError,
@@ -117,6 +118,7 @@ export async function POST(
     if (!r.matchedCount) {
       return NextResponse.json({ error: "already signed" }, { status: 409 });
     }
+    await emitEnvelopeEvent(envelope, "signed", { signerIdx: signer.idx, at: now });
 
     // Last one out flattens: claim `sent` -> `completed` atomically so exactly
     // one request builds the executed PDF.
@@ -151,6 +153,10 @@ export async function POST(
           await db
             .collection("envelopes")
             .updateOne({ _id: envelopeId }, { $set: { executedFileId } });
+          // Only the claim winner emits `completed`, and only after the
+          // executed PDF exists — a consumer reacting to the webhook can
+          // fetch /document and get the executed copy immediately.
+          await emitEnvelopeEvent(envelope, "completed", { at: completedAt });
         } catch (e) {
           // Roll the claim back so the completion isn't half-recorded.
           await db

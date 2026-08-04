@@ -10,3 +10,15 @@ export function firstHeaderValue(value: string | null): string | null {
   const first = value.split(",")[0].trim();
   return first || null;
 }
+
+// Client-facing origin for minting absolute signing links, derived from the
+// forwarded headers (first value wins, per above). Takes anything Headers-like
+// so it works with NextRequest.headers and plain fetch Headers alike.
+export function publicBase(headers: { get(name: string): string | null }): string {
+  const proto = firstHeaderValue(headers.get("x-forwarded-proto")) ?? "https";
+  const host =
+    firstHeaderValue(headers.get("x-forwarded-host")) ??
+    firstHeaderValue(headers.get("host")) ??
+    "sign.redbtn.io";
+  return `${proto}://${host}`;
+}

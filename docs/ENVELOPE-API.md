@@ -2,9 +2,9 @@
 
 Status: **adopted 2026-08-03** (George approved the recommendations on the four
 open calls). Written from the consumer side; redFinance is the first customer.
-Implemented through Phase 3 (envelope API core, sender compose flow, public
-signing + flattening); webhooks are still pending. When reality diverges
-during the build, update this doc in the same PR.
+Implemented through Phase 4 (envelope API core, sender compose flow, public
+signing + flattening, lifecycle events + signed webhooks + sender dashboard).
+When reality diverges during the build, update this doc in the same PR.
 
 ## Context: redSuite
 
@@ -38,6 +38,8 @@ services.
 | `POST /api/envelopes` | multipart PDF + JSON `{signers, fields, metadata, webhookUrl}` → `{envelopeId, signers: [{idx, signingUrl}]}` |
 | `GET /api/envelopes/:id` | envelope + live status |
 | `GET /api/envelopes/:id/document` | current (or executed) PDF |
+| `GET /api/envelopes/:id/links` | signing URLs per signer (senders AND owning consumers — link recovery) |
+| `GET /api/envelopes/:id/events` | lifecycle audit trail (newest first, max 100) |
 | `POST /api/envelopes/:id/void` | cancel |
 | `GET /sign/:signerToken` | public signing page (standalone, mobile-first) |
 | `GET /api/sign/:signerToken` | public signer state (JSON, token-guarded) |
@@ -83,14 +85,46 @@ sign.redbtn.io". The executed PDF lands in GridFS (`pdfs` bucket,
 
 Divergence note: v0 planned "the existing prototype UX" for `/sign/:token`;
 what shipped is a purpose-built standalone mobile-first page (no sender
-shell) that reuses the prototype's SignatureCanvas capture. Webhooks
-(`sent/viewed/signed/...`) are still **not implemented** — the dispatcher
-remains future work.
+shell) that reuses the prototype's SignatureCanvas capture.
 
-Webhooks: POST to the consumer's `webhookUrl` on `sent / viewed / signed /
-completed / declined / voided` with `{event, envelopeId, signerIdx?, at,
-metadata}` and header `X-RedSign-Signature` (HMAC-SHA256, shared secret).
-Retry with backoff on non-2xx.
+### Lifecycle events + webhooks (Phase 4 — shipped 2026-08-04)
+
+Every transition appends to an `envelope_events` audit collection (served by
+`GET /api/envelopes/:id/events`, the dashboard's timeline) and, when the
+envelope has a `webhookUrl`, POSTs to it:
+
+- **Events**: `sent` (creation IS the sent transition in v0 — there is no
+  draft step), `viewed` (first `GET /api/sign/:token` per signer, exactly
+  once — an atomic compare-and-set on the signer's `viewedAt`), `signed`
+  (each signer completion, with `signerIdx`), `completed` (emitted only
+  after the executed PDF is in GridFS, so a consumer reacting to it can
+  fetch `/document` and get the executed copy immediately), `voided`.
+  `declined` is **reserved**: no decline flow ships in v0; the name is
+  allocated so consumers can switch on it.
+- **Payload**: JSON `{event, envelopeId, signerIdx?, at, metadata}` —
+  `signerIdx` only on `viewed`/`signed`, `at` ISO-8601, `metadata` the
+  envelope's metadata verbatim (this is how redFinance finds its
+  `contractorId` again).
+- **Signature**: header `X-RedSign-Signature: sha256=<hex>` = HMAC-SHA256 of
+  the raw request body. Verify with a constant-time compare against your
+  recomputation. Consumer-created envelopes are signed with that consumer's
+  `webhookSecret` (stored retrievable on the consumers row — redSign must be
+  able to compute the HMAC, so unlike the hashed service key it cannot be
+  hashed; provisioned via `webapp/scripts/ensure-webhook-secret.mjs`, read
+  out-of-band by the operator). Sender-created envelopes are signed with the
+  deployment-wide `WEBHOOK_FALLBACK_SECRET` env. If no secret is available
+  the delivery is recorded as `failed` and never sent — an unsigned webhook
+  would train consumers to skip verification. The body is serialized and
+  signed once at enqueue; every attempt POSTs those exact bytes.
+- **Delivery + retry**: 10s timeout; non-2xx or network error retries with
+  backoff **30s → 2m → 10m → 10m** (5 attempts total, then `failed`). No
+  queue infra: deliveries persist in a `webhook_deliveries` collection
+  `{envelopeId, event, url, body, sig, attempts, nextAttemptAt, status:
+  pending|inflight|delivered|failed}`; the first attempt fires immediately
+  (fire-and-forget from the transition), a 60s in-process sweep claims due
+  rows atomically and retries. Deliveries are at-least-once and unordered
+  under retries — consumers should treat `{envelopeId, event, signerIdx}` as
+  idempotency key and rely on `at` for ordering.
 
 ## Auth planes (suite conventions)
 

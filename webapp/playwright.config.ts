@@ -3,7 +3,8 @@ import { defineConfig } from '@playwright/test';
 export default defineConfig({
   testDir: './tests',
   webServer: {
-    command: 'npm run dev -- --host localhost --port 5173',
+    command: 'npm run dev -- --port 5173',
+    env: { AUTH_BYPASS: '1' },
     url: 'http://localhost:5173',
     reuseExistingServer: true,
     timeout: 120000,

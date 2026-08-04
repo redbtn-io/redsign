@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { lookupEnvelopeByToken } from "@/lib/signaccess";
 import { signerFieldEntries, signingTurn, type SignField } from "@/lib/signing";
+import { recordViewedOnce } from "@/lib/webhooks";
 
 // Public signer state (Phase 3). Token-guarded, no auth: middleware exempts
 // /api/sign/*, and the 48-hex token IS the credential. Unknown and voided
@@ -19,6 +20,9 @@ export async function GET(
     if (envelope.status === "voided") {
       return NextResponse.json({ error: "voided" }, { status: 404 });
     }
+    // First state fetch per signer = `viewed`, exactly once (atomic
+    // compare-and-set on viewedAt: null → event + webhook inside).
+    await recordViewedOnce(envelope, signer);
     const { canSign, waitingOn } = signingTurn(
       String(envelope.status),
       envelope.signers,

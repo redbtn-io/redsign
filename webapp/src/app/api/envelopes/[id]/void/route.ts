@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
 import { authenticate } from "@/lib/apiauth";
+import { emitEnvelopeEvent } from "@/lib/webhooks";
 
 export async function POST(
   req: NextRequest,
@@ -17,12 +18,16 @@ export async function POST(
       status: { $in: ["draft", "sent"] },
     };
     if (who.kind === "consumer") filter.createdBy = `consumer:${who.name}`;
-    const r = await db
+    const voidedAt = new Date();
+    // findOneAndUpdate (not updateOne): the voided doc is needed for the
+    // webhook context (webhookUrl / metadata / createdBy).
+    const voided = await db
       .collection("envelopes")
-      .updateOne(filter, { $set: { status: "voided", voidedAt: new Date() } });
-    if (!r.matchedCount) {
+      .findOneAndUpdate(filter, { $set: { status: "voided", voidedAt } }, { returnDocument: "after" });
+    if (!voided) {
       return NextResponse.json({ error: "not found or not voidable" }, { status: 409 });
     }
+    await emitEnvelopeEvent(voided, "voided", { at: voidedAt });
     return NextResponse.json({ ok: true });
   } catch (e) {
     return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 500 });

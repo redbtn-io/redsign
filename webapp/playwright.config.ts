@@ -9,7 +9,10 @@ export default defineConfig({
   workers: 1,
   webServer: {
     command: 'npm run dev -- --port 5173',
-    env: { AUTH_BYPASS: '1' },
+    // WEBHOOK_FALLBACK_SECRET must match tests/webhooks.spec.ts, which
+    // verifies delivered HMAC signatures against the same value. Test-only —
+    // prod carries a real secret in the workspace env.
+    env: { AUTH_BYPASS: '1', WEBHOOK_FALLBACK_SECRET: 'redsign-e2e-fallback-secret-0123456789abcdef' },
     url: 'http://localhost:5173',
     reuseExistingServer: true,
     timeout: 120000,

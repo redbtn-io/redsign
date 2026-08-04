@@ -2,20 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { authenticate } from "@/lib/apiauth";
 import { mintToken, storePdf, validateFields, validateSigners } from "@/lib/envelopes";
-import { firstHeaderValue } from "@/lib/http";
+import { publicBase } from "@/lib/http";
+import { emitEnvelopeEvent } from "@/lib/webhooks";
 
 const MAX_PDF = 20 * 1024 * 1024;
-
-function publicBase(req: NextRequest): string {
-  // Forwarded headers arrive comma-joined through the proxy chain — take the
-  // first value or signing links come out as "https,http://sign...".
-  const proto = firstHeaderValue(req.headers.get("x-forwarded-proto")) ?? "https";
-  const host =
-    firstHeaderValue(req.headers.get("x-forwarded-host")) ??
-    firstHeaderValue(req.headers.get("host")) ??
-    "sign.redbtn.io";
-  return `${proto}://${host}`;
-}
 
 export async function GET(req: NextRequest) {
   try {
@@ -93,6 +83,7 @@ export async function POST(req: NextRequest) {
         ...s,
         token: mintToken(),
         status: "pending" as const,
+        viewedAt: null as Date | null,
         signedAt: null as Date | null,
         consentAt: null as Date | null,
         ip: null as string | null,
@@ -107,7 +98,11 @@ export async function POST(req: NextRequest) {
       completedAt: null as Date | null,
     };
     const r = await db.collection("envelopes").insertOne(doc);
-    const base = publicBase(req);
+    // Envelopes are created straight into `sent` (v0 has no draft step):
+    // creation IS the sent transition. Event append is awaited (durable before
+    // the response); the delivery attempt itself is fire-and-forget inside.
+    await emitEnvelopeEvent({ _id: r.insertedId, ...doc }, "sent", { at: now });
+    const base = publicBase(req.headers);
     return NextResponse.json(
       {
         envelopeId: String(r.insertedId),

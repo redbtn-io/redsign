@@ -2,12 +2,18 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { authenticate } from "@/lib/apiauth";
 import { mintToken, storePdf, validateFields, validateSigners } from "@/lib/envelopes";
+import { firstHeaderValue } from "@/lib/http";
 
 const MAX_PDF = 20 * 1024 * 1024;
 
 function publicBase(req: NextRequest): string {
-  const proto = req.headers.get("x-forwarded-proto") ?? "https";
-  const host = req.headers.get("x-forwarded-host") ?? req.headers.get("host") ?? "sign.redbtn.io";
+  // Forwarded headers arrive comma-joined through the proxy chain — take the
+  // first value or signing links come out as "https,http://sign...".
+  const proto = firstHeaderValue(req.headers.get("x-forwarded-proto")) ?? "https";
+  const host =
+    firstHeaderValue(req.headers.get("x-forwarded-host")) ??
+    firstHeaderValue(req.headers.get("host")) ??
+    "sign.redbtn.io";
   return `${proto}://${host}`;
 }
 

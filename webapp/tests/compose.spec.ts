@@ -114,7 +114,9 @@ test('compose: real POST creates a live envelope and returns signing links', asy
   expect(body.envelopeId).toBeTruthy();
 
   await expect(page.getByTestId('composer-result')).toBeVisible();
-  await expect(page.getByTestId('signing-link')).toHaveText(/\/sign\/[0-9a-f]{48}$/);
+  // Full-URL match: catches malformed schemes from comma-joined forwarded
+  // headers (the "https,http://" regression), not just the token tail.
+  await expect(page.getByTestId('signing-link')).toHaveText(/^https?:\/\/[^,\s]+\/sign\/[0-9a-f]{48}$/);
 
   // Tap-to-copy feedback.
   await page.getByTestId('copy-link').first().click();

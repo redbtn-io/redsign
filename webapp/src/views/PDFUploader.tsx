@@ -3,11 +3,17 @@ import { Button, Card, CardContent, CardDescription, CardHeader, CardTitle } fro
 import '../utils/setupPdf'; // import worker setup
 
 import { PDFView } from '../components/PDFView';
+import EnvelopeComposer from '../components/EnvelopeComposer';
 import { Breakpoint } from '../types/breakpoint';
+
+// 'preview' = the original self-sign preview (unchanged); 'compose' = the
+// Phase 2b sender flow (signers + field placement + POST /api/envelopes).
+type UploaderMode = 'preview' | 'compose';
 
 export default function PDFUploader({ breakpoint }: { breakpoint: Breakpoint | null }) {
   const [pdfFile, setPdfFile] = useState<File | null>(null);
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
+  const [mode, setMode] = useState<UploaderMode>('preview');
 
   const handleUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -19,8 +25,10 @@ export default function PDFUploader({ breakpoint }: { breakpoint: Breakpoint | n
     }
   };
 
+  const compose = mode === 'compose' && pdfUrl && pdfFile;
+
   return (
-    <div className="mx-auto w-full max-w-xl">
+    <div className={`mx-auto w-full ${compose ? 'max-w-5xl' : 'max-w-xl'}`}>
       {!pdfUrl && (<>
         <PDFUpload handleUpload={handleUpload} />
         </>
@@ -28,19 +36,43 @@ export default function PDFUploader({ breakpoint }: { breakpoint: Breakpoint | n
 
       {pdfUrl && (<>
 
-        <div className="mt-5">
-          <h3>PDF Preview:</h3>
-          <PDFView {...{pdfUrl, breakpoint}} />
+        <div className="mt-5 flex gap-2">
+          <Button
+            variant={mode === 'preview' ? 'default' : 'outline'}
+            onClick={() => setMode('preview')}
+            data-testid="mode-preview"
+          >
+            Preview &amp; self-sign
+          </Button>
+          <Button
+            variant={mode === 'compose' ? 'default' : 'outline'}
+            onClick={() => setMode('compose')}
+            data-testid="mode-compose"
+          >
+            Send for signature
+          </Button>
         </div>
 
-        {pdfFile && (
+        {mode === 'preview' && (<>
           <div className="mt-5">
-            <p> <strong>PDF File:</strong> {pdfFile.name}</p>
-            <p>{pdfFile.type} | {(pdfFile.size / 1024).toFixed(2)} KB</p>
-            <UploadButton handleUpload={handleUpload} text={'Choose Another File'} />
+            <h3>PDF Preview:</h3>
+            <PDFView {...{pdfUrl, breakpoint}} />
           </div>
+
+          {pdfFile && (
+            <div className="mt-5">
+              <p> <strong>PDF File:</strong> {pdfFile.name}</p>
+              <p>{pdfFile.type} | {(pdfFile.size / 1024).toFixed(2)} KB</p>
+              <UploadButton handleUpload={handleUpload} text={'Choose Another File'} />
+            </div>
+          )}
+        </>)}
+
+        {compose && (
+          // Keyed on the object URL so a newly chosen file resets the draft.
+          <EnvelopeComposer key={pdfUrl} pdfFile={pdfFile} pdfUrl={pdfUrl} breakpoint={breakpoint} />
         )}
-    
+
       </>
       )}
     </div>

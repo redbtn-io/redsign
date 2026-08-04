@@ -1,8 +1,9 @@
-# redSign Envelope API — integration contract (DRAFT v0)
+# redSign Envelope API — integration contract (v0)
 
-Status: **draft for George's review**. Written 2026-08-03 from the consumer side
-(redFinance is the first customer). Nothing here is implemented yet; this is the
-contract both sides build to.
+Status: **adopted 2026-08-03** (George approved the recommendations on the four
+open calls). Written from the consumer side; redFinance is the first customer.
+Nothing here is implemented yet; this is the contract both sides build to. When
+reality diverges during the build, update this doc in the same PR.
 
 ## Context: redSuite
 
@@ -76,11 +77,11 @@ workspace + `sign.redbtn.io`.
 redFinance's consumer-side work: a small client lib, an HMAC-verified webhook
 receiver, "Sign" buttons on the portal, archive integration.
 
-## Open questions for George
+## v0 decisions (adopted 2026-08-03)
 
-1. v0 accepts PDFs only (consumers handle HTML→PDF themselves)? Recommend yes.
-2. `sign.redbtn.io` as the domain? Recommend yes.
-3. Per-consumer service keys vs reusing INTERNAL_SERVICE_KEY? Recommend
-   per-consumer keys (revocable independently).
-4. Does redSign deliver signer notifications itself (email/SMS) in v0, or do
-   consumers deliver the links? Recommend consumer-delivery in v0.
+1. **PDF-only v0.** Consumers own HTML→PDF; redSign accepts and produces PDFs.
+2. **Domain: `sign.redbtn.io`** (suite convention; custom domain later).
+3. **Per-consumer service keys** (`x-redsign-key`), issued and revocable per
+   app. INTERNAL_SERVICE_KEY is not reused.
+4. **Consumers deliver signer links in v0.** Native email/SMS delivery is a v1
+   feature for non-redbtn customers.

@@ -110,3 +110,12 @@ export async function readPdf(fileId: string): Promise<{ stream: NodeJS.Readable
   if (!file) return null;
   return { stream: pdfBucket(db).openDownloadStream(new ObjectId(fileId)) };
 }
+
+// Whole-file read for the flattener (pdf-lib wants the full buffer).
+export async function readPdfBuffer(fileId: string): Promise<Buffer | null> {
+  const pdf = await readPdf(fileId);
+  if (!pdf) return null;
+  const chunks: Buffer[] = [];
+  for await (const chunk of pdf.stream) chunks.push(chunk as Buffer);
+  return Buffer.concat(chunks);
+}

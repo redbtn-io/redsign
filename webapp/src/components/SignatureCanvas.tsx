@@ -104,6 +104,7 @@ export const SignatureCanvas = ({
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <canvas
         ref={canvasRef}
+        data-testid="signature-canvas"
         width={width}
         height={height}
         style={{ border: '1px solid #ccc', touchAction: 'none' }}

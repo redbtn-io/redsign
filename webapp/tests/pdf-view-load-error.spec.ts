@@ -14,7 +14,8 @@ test('shows an error state when PDF document fails to load', async ({ page }) =>
     await Promise.all(document.getAnimations().map((animation) => animation.finished));
   });
 
-  const errorAlert = page.getByRole('alert');
+  // Next.js injects its own role="alert" route announcer — filter to ours.
+  const errorAlert = page.getByRole('alert').filter({ hasText: /Unable to load/ });
   await expect(errorAlert).toBeVisible();
   await expect(errorAlert).toHaveText(/Unable to load the PDF document\./);
 });

@@ -32,6 +32,11 @@ export async function middleware(request: NextRequest) {
   if (process.env.AUTH_BYPASS === "1") return NextResponse.next();
   const { pathname } = request.nextUrl;
   if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next();
+  // Machine consumers authenticate with x-redsign-key; the envelope routes
+  // verify it against the hashed store (edge middleware can't reach Mongo).
+  if (pathname.startsWith("/api/envelopes") && request.headers.get("x-redsign-key")) {
+    return NextResponse.next();
+  }
 
   // Fail closed: no secret configured means nobody gets in.
   const secret = (process.env.JWT_SECRET ?? "").replace(/^"|"$/g, "");

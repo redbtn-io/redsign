@@ -51,8 +51,10 @@ jobs:
       # webapp depends on @redbtn/redstyle, which lives on the private Verdaccio
       # at registry.redbtn.io and 401s anonymously. Verdaccio wants BASIC auth:
       # a long-lived username + base64 password (not a bearer token, so it does
-      # not expire), matching the shared read-only `redrun-pub` credential other
-      # redbtn repositories use.
+      # not expire), matching the shared build credential other redbtn
+      # repositories use. Note it is not read-only: the registry grants publish
+      # to any authenticated account, so this credential must never be
+      # committed or exposed to PR-controlled code.
       #
       # SECURITY: this workflow runs on `pull_request`, so it executes
       # PR-controlled code. The credential must never be reachable by that code.
@@ -92,9 +94,11 @@ jobs:
 
       # From here on the credential is gone, so PR-controlled test and build code
       # cannot read or exfiltrate it.
+      # Restores the committed, credential-free .npmrc (registry mapping only)
+      # so the scrub removes the credential without removing the scope mapping.
       - name: Scrub the registry credential
         if: always()
-        run: rm -f .npmrc
+        run: git checkout -- .npmrc 2>/dev/null || rm -f .npmrc
 
       - name: Typecheck
         run: npx tsc -b

@@ -1,13 +1,18 @@
+# syntax=docker/dockerfile:1
 # redSign — Next.js standalone build.
-# Repo-owned Dockerfile because the deps stage must see .npmrc (read-only
-# redrun-pub cred) for the private @redbtn scope; the platform-generated
-# Dockerfile only copies package*.json.
+# Repo-owned Dockerfile because the deps stage needs registry auth for the
+# private @redbtn scope; the platform-generated Dockerfile only copies
+# package*.json. The credential is NEVER committed: it arrives as a BuildKit
+# secret mount (id "npmrc"), backed by the global NPMRC redsecret that RedRun
+# supplies to every git-source build, and is mounted only for the npm ci
+# layer, so it never lands in an image layer or docker history.
 FROM node:22-slim AS base
 WORKDIR /app
 
 FROM base AS deps
 COPY package.json package-lock.json .npmrc ./
-RUN npm ci
+RUN --mount=type=secret,id=npmrc,target=/app/.npmrc \
+    npm ci
 
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules

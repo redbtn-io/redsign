@@ -8,8 +8,9 @@
     "start": "next start",
     "lint": "eslint .",
     "test:unit": "node --test 'src/**/*.test.ts'",
+    "test:db": "node --test --test-concurrency=1 --test-timeout=180000 'tests/db/*.test.mjs'",
     "test:e2e": "playwright test",
-    "test": "npm run test:unit && npm run test:e2e"
+    "test": "npm run test:unit && npm run test:db && npm run test:e2e"
   },
   "dependencies": {
     "@redbtn/redstyle": "^0.6.1",
@@ -33,6 +34,7 @@
     "eslint": "^9.21.0",
     "eslint-plugin-react-hooks": "^5.1.0",
     "eslint-plugin-react-refresh": "^0.4.19",
+    "mongodb-memory-server": "^10.1.4",
     "postcss": "^8.5.1",
     "tailwindcss": "^3.4.17",
     "typescript": "^5.7.0",

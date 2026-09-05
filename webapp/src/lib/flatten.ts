@@ -14,12 +14,20 @@ import {
 export type FlattenSigner = {
   idx: number;
   name: string;
+  email?: string | null;
   order?: number | null;
   consentAt?: Date | string | null;
   signedAt?: Date | string | null;
   ip?: string | null;
+  ipChain?: string | null;
   userAgent?: string | null;
   values?: Record<string, string>;
+  // v0.2 consent record (lib/disclosures.ts).
+  consent?: {
+    disclosureVersion?: string | null;
+    disclosureKind?: string | null;
+    disclosureSha256?: string | null;
+  } | null;
 };
 
 const INK = rgb(0.08, 0.08, 0.16);
@@ -165,7 +173,19 @@ export async function buildExecutedPdf(opts: {
   line(`Document: ${documentName}`, { gap: 2 });
   line(`Completed: ${fmt(completedAt)}`, { gap: 6 });
   line("SHA-256 of original document:", { size: 9, color: MUTED });
-  line(sha256, { size: 9, font: mono, gap: 12 });
+  line(sha256, { size: 9, font: mono, gap: 6 });
+  // The digest of the executed file cannot be printed inside that same file:
+  // adding it would change the bytes it describes. It is published instead on
+  // the envelope, in the `completed` webhook payload and in
+  // GET /api/envelopes/:id/audit, which is where a consumer verifies the copy
+  // it archived.
+  line("SHA-256 of this executed document:", { size: 9, color: MUTED });
+  line(
+    "published as executedSha256 in the completed webhook and GET /api/envelopes/" +
+      envelopeId +
+      "/audit (a file cannot contain its own digest)",
+    { size: 8, color: MUTED, gap: 12 }
+  );
 
   page.drawLine({
     start: { x: LEFT, y: y + 6 },
@@ -180,10 +200,29 @@ export async function buildExecutedPdf(opts: {
   );
   for (const s of ordered) {
     ensureRoom(80);
-    line(`Signer ${s.idx + 1}: ${s.name}`, { size: 12, font: bold, gap: 2 });
+    line(`Signer ${s.idx + 1}: ${s.name}${s.email ? ` <${s.email}>` : ""}`, {
+      size: 12,
+      font: bold,
+      gap: 2,
+    });
     line(`Consented to electronic signature: ${fmt(s.consentAt)}`, { size: 9, gap: 1 });
+    if (s.consent?.disclosureVersion) {
+      line(
+        `Disclosure shown: ${s.consent.disclosureKind ?? "individual"} v${s.consent.disclosureVersion}`,
+        { size: 9, gap: 1 }
+      );
+      if (s.consent.disclosureSha256) {
+        line(`Disclosure SHA-256: ${s.consent.disclosureSha256}`, {
+          size: 8,
+          font: mono,
+          color: MUTED,
+          gap: 1,
+        });
+      }
+    }
     line(`Signed: ${fmt(s.signedAt)}`, { size: 9, gap: 1 });
     line(`IP address: ${s.ip || "n/a"}`, { size: 9, gap: 1 });
+    if (s.ipChain) line(`Forwarded chain: ${s.ipChain}`, { size: 8, color: MUTED, gap: 1 });
     line(`Device: ${s.userAgent || "n/a"}`, { size: 9, color: MUTED, gap: 10 });
   }
 

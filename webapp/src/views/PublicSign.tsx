@@ -23,15 +23,35 @@ type SignerField = {
   required: boolean;
 };
 
+// The ESIGN disclosure the signer has to be shown before consenting (v0.2).
+// The server owns the text and its version; the page only renders it and
+// echoes the version back when recording consent.
+type Disclosure = {
+  version: string;
+  kind: string;
+  title: string;
+  sections: { heading: string; body: string }[];
+  acknowledgement: string;
+};
+
 type SignState = {
-  envelope: { documentName: string; status: string };
-  signer: { idx: number; name: string; status: string };
+  envelope: { documentName: string; status: string; expiresAt?: string | null };
+  signer: { idx: number; name: string; status: string; consentAt?: string | null };
+  disclosure: Disclosure;
   fields: SignerField[];
   canSign: boolean;
   waitingOn: string | null;
 };
 
-type Phase = "loading" | "notfound" | "voided" | "failed" | "ready" | "success";
+type Phase =
+  | "loading"
+  | "notfound"
+  | "voided"
+  | "expired"
+  | "accesscode"
+  | "failed"
+  | "ready"
+  | "success";
 
 const COLORS = {
   bg: "#f4f4f5",
@@ -110,6 +130,12 @@ export default function PublicSign({ token }: { token: string }) {
   const [state, setState] = useState<SignState | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [consent, setConsent] = useState(false);
+  const [showDisclosure, setShowDisclosure] = useState(false);
+  // Optional out-of-band access code on the signing link. Held in memory only:
+  // persisting it would defeat the point of a second factor on a shared device.
+  const [accessCode, setAccessCode] = useState("");
+  const [codeInput, setCodeInput] = useState("");
+  const [codeError, setCodeError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState(1);
@@ -128,37 +154,59 @@ export default function PublicSign({ token }: { token: string }) {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
+  // One loader, reusable: the first render calls it with no code, and the
+  // access-code screen calls it again once the signer supplies one.
+  const load = useCallback(
+    async (code: string, signal?: { cancelled: boolean }) => {
       if (!isValidSigningToken(token)) {
         setPhase("notfound");
         return;
       }
       try {
-        const res = await fetch(`/api/sign/${token}`);
+        const res = await fetch(`/api/sign/${token}`, {
+          headers: code ? { "x-redsign-access-code": code } : undefined,
+        });
+        if (res.status === 401) {
+          if (signal?.cancelled) return;
+          setCodeError(code ? "That code doesn't match. Check it with the sender." : null);
+          setPhase("accesscode");
+          return;
+        }
         if (res.status === 404) {
           const body = await res.json().catch(() => ({}));
-          if (!cancelled) setPhase(body?.error === "voided" ? "voided" : "notfound");
+          if (signal?.cancelled) return;
+          setPhase(
+            body?.error === "voided" ? "voided" : body?.error === "expired" ? "expired" : "notfound"
+          );
           return;
         }
         if (!res.ok) throw new Error(`status ${res.status}`);
         const data: SignState = await res.json();
-        if (cancelled) return;
+        if (signal?.cancelled) return;
         // Date fields prefill with today's date (still editable).
         const prefill: Record<string, string> = {};
         for (const f of data.fields) if (f.type === "date") prefill[f.key] = todayLabel();
         setValues(prefill);
         setState(data);
+        setCodeError(null);
+        // A signer who already consented (their /consent call landed before
+        // they lost the page) does not have to tick the box twice.
+        setConsent(Boolean(data.signer.consentAt));
         setPhase("ready");
       } catch {
-        if (!cancelled) setPhase("failed");
+        if (!signal?.cancelled) setPhase("failed");
       }
-    })();
+    },
+    [token]
+  );
+
+  useEffect(() => {
+    const signal = { cancelled: false };
+    void load("", signal);
     return () => {
-      cancelled = true;
+      signal.cancelled = true;
     };
-  }, [token]);
+  }, [load]);
 
   const measurePage = useCallback(() => {
     const el = pageWrapRef.current?.querySelector(".react-pdf__Page") as HTMLElement | null;
@@ -200,6 +248,88 @@ export default function PublicSign({ token }: { token: string }) {
         title="This document was voided"
         body="The sender cancelled this envelope, so it can no longer be signed. Ask the sender for a new one if you believe this is a mistake."
       />
+    );
+  }
+  if (phase === "expired") {
+    return (
+      <Notice
+        testId="sign-expired"
+        title="This signing link has expired"
+        body="The sender set an expiry on this envelope and it has passed, so it can no longer be signed. Ask the sender to send a new one."
+      />
+    );
+  }
+  if (phase === "accesscode") {
+    return (
+      <div
+        style={{
+          minHeight: "100dvh",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: COLORS.bg,
+          padding: 24,
+        }}
+      >
+        <form
+          data-testid="sign-accesscode"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setAccessCode(codeInput);
+            setPhase("loading");
+            void load(codeInput);
+          }}
+          style={{
+            background: COLORS.card,
+            border: `1px solid ${COLORS.border}`,
+            borderRadius: 12,
+            padding: "28px 24px",
+            width: "100%",
+            maxWidth: 380,
+            boxShadow: "0 1px 3px rgba(0,0,0,0.06)",
+          }}
+        >
+          <div style={{ marginBottom: 14 }}>
+            <Wordmark />
+          </div>
+          <h1 style={{ fontSize: 18, fontWeight: 600, color: COLORS.ink, margin: "0 0 8px" }}>
+            Enter your access code
+          </h1>
+          <p style={{ fontSize: 14, lineHeight: 1.6, color: COLORS.muted, margin: "0 0 16px" }}>
+            The sender gave you a code separately from this link. Enter it to open the document.
+          </p>
+          <input
+            data-testid="accesscode-input"
+            value={codeInput}
+            onChange={(e) => setCodeInput(e.target.value)}
+            autoComplete="one-time-code"
+            autoFocus
+            aria-label="Access code"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "11px 12px",
+              fontSize: 16,
+              letterSpacing: 1,
+              border: `1.5px solid ${codeError ? COLORS.red : COLORS.border}`,
+              borderRadius: 8,
+              marginBottom: 12,
+            }}
+          />
+          {codeError && (
+            <p
+              data-testid="accesscode-error"
+              role="alert"
+              style={{ margin: "0 0 12px", fontSize: 13, color: COLORS.red }}
+            >
+              {codeError}
+            </p>
+          )}
+          <Button type="submit" disabled={!codeInput.trim()} style={{ width: "100%" }}>
+            Continue
+          </Button>
+        </form>
+      </div>
     );
   }
   if (phase === "failed") {
@@ -271,13 +401,36 @@ export default function PublicSign({ token }: { token: string }) {
   );
   const readyToFinish = consent && missing.length === 0 && !submitting;
 
+  // Consent is recorded the moment the box is ticked, on the server's clock,
+  // with the disclosure version the signer was actually shown. Recording it
+  // only at completion would timestamp the wrong act. A failure here is not
+  // fatal: /complete still records consent inline, so the signer is never
+  // blocked by a transient network error on a side call.
+  async function recordConsent() {
+    try {
+      await fetch(`/api/sign/${token}/consent`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessCode ? { "x-redsign-access-code": accessCode } : {}),
+        },
+        body: JSON.stringify({ consent: true, disclosureVersion: s.disclosure?.version }),
+      });
+    } catch {
+      // deliberately swallowed, see above
+    }
+  }
+
   async function finish() {
     setSubmitting(true);
     setSubmitError(null);
     try {
       const res = await fetch(`/api/sign/${token}/complete`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          ...(accessCode ? { "x-redsign-access-code": accessCode } : {}),
+        },
         body: JSON.stringify({ consent: true, values }),
       });
       const body = await res.json().catch(() => ({}));
@@ -444,7 +597,7 @@ export default function PublicSign({ token }: { token: string }) {
             </div>
           ) : (
             <Document
-              file={`/api/sign/${token}/document`}
+              file={`/api/sign/${token}/document${accessCode ? `?code=${encodeURIComponent(accessCode)}` : ""}`}
               onLoadSuccess={({ numPages: n }) => setNumPages(n)}
               onLoadError={(err) => setPdfError(err?.message ?? "")}
               loading={<div style={{ padding: 40, color: COLORS.muted, fontSize: 14 }}>Loading document…</div>}
@@ -513,6 +666,67 @@ export default function PublicSign({ token }: { token: string }) {
           gap: 10,
         }}
       >
+        {s.disclosure && (
+          <div
+            style={{
+              border: `1px solid ${COLORS.border}`,
+              borderRadius: 8,
+              background: COLORS.bg,
+              overflow: "hidden",
+            }}
+          >
+            <button
+              type="button"
+              data-testid="disclosure-toggle"
+              aria-expanded={showDisclosure}
+              onClick={() => setShowDisclosure((v) => !v)}
+              style={{
+                width: "100%",
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                gap: 8,
+                padding: "10px 12px",
+                background: "transparent",
+                border: "none",
+                textAlign: "left",
+                font: "inherit",
+                fontSize: 13,
+                fontWeight: 600,
+                color: COLORS.ink,
+                cursor: "pointer",
+              }}
+            >
+              <span>{s.disclosure.title}</span>
+              <span style={{ color: COLORS.muted, fontWeight: 400 }}>
+                {showDisclosure ? "Hide" : "Read"}
+              </span>
+            </button>
+            {showDisclosure && (
+              <div
+                data-testid="disclosure-body"
+                style={{
+                  padding: "0 12px 12px",
+                  maxHeight: "40dvh",
+                  overflowY: "auto",
+                  fontSize: 12.5,
+                  lineHeight: 1.6,
+                  color: COLORS.ink,
+                }}
+              >
+                {s.disclosure.sections.map((sec) => (
+                  <div key={sec.heading} style={{ marginBottom: 10 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 2 }}>{sec.heading}</div>
+                    <div style={{ color: COLORS.muted }}>{sec.body}</div>
+                  </div>
+                ))}
+                <div style={{ fontSize: 11, color: COLORS.muted }}>
+                  Disclosure version {s.disclosure.version}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
         <label
           style={{
             display: "flex",
@@ -528,12 +742,15 @@ export default function PublicSign({ token }: { token: string }) {
             type="checkbox"
             data-testid="sign-consent"
             checked={consent}
-            onChange={(e) => setConsent(e.target.checked)}
+            onChange={(e) => {
+              setConsent(e.target.checked);
+              if (e.target.checked) void recordConsent();
+            }}
             style={{ marginTop: 2, width: 18, height: 18, accentColor: COLORS.red, flexShrink: 0 }}
           />
           <span>
-            I agree to sign this document electronically and that my electronic signature is
-            legally binding.
+            {s.disclosure?.acknowledgement ??
+              "I agree to sign this document electronically and that my electronic signature is legally binding."}
           </span>
         </label>
         {submitError && (

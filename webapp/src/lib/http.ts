@@ -22,3 +22,32 @@ export function publicBase(headers: { get(name: string): string | null }): strin
     "sign.redbtn.io";
   return `${proto}://${host}`;
 }
+
+// Client IP for the audit trail (v0.2).
+//
+// v0 recorded only the first X-Forwarded-For value. sign.redbtn.io sits behind
+// Cloudflare and then redrouter-proxy and then traefik, and each hop appends,
+// so the first value is whatever the outermost proxy was told: spoofable by
+// the client sending its own X-Forwarded-For. CF-Connecting-IP is set by
+// Cloudflare from the real TCP peer and cannot be spoofed through it, so it
+// wins when present. The whole forwarded chain is kept verbatim beside it,
+// because an audit trail that shows only the answer cannot be checked.
+export function clientIp(headers: { get(name: string): string | null }): {
+  ip: string | null;
+  chain: string | null;
+  source: "cf-connecting-ip" | "x-forwarded-for" | "x-real-ip" | null;
+} {
+  const cf = firstHeaderValue(headers.get("cf-connecting-ip"));
+  const xff = headers.get("x-forwarded-for");
+  const real = firstHeaderValue(headers.get("x-real-ip"));
+  const chainParts: string[] = [];
+  if (cf) chainParts.push(`cf-connecting-ip=${cf}`);
+  if (xff) chainParts.push(`x-forwarded-for=${xff.trim()}`);
+  if (real) chainParts.push(`x-real-ip=${real}`);
+  const chain = chainParts.length ? chainParts.join("; ").slice(0, 500) : null;
+  if (cf) return { ip: cf, chain, source: "cf-connecting-ip" };
+  const first = firstHeaderValue(xff);
+  if (first) return { ip: first, chain, source: "x-forwarded-for" };
+  if (real) return { ip: real, chain, source: "x-real-ip" };
+  return { ip: null, chain, source: null };
+}

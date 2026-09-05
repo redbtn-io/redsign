@@ -2,13 +2,15 @@ import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
 import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
-import { publicBase } from "@/lib/http";
 
-// Signing links for an envelope's signers — the one read that intentionally
-// returns tokens (as full URLs). Senders use it to re-copy a pending signer's
-// link from the dashboard; consumers own their envelopes and may re-fetch the
-// links they were handed at creation (e.g. after losing the create response).
-// Every other envelope read keeps projecting tokens out.
+// Collected field values, including the signature and initials PNGs (v0.2).
+//
+// Every other envelope read projects signers.values out. A signature image is
+// biometric-adjacent personal data and it is the one thing in an envelope that
+// is directly reusable for forgery, so it does not ride along on a list or a
+// status poll. This route is the single deliberate way to it: owner-only (the
+// creating consumer, or an @redbtn.io sender), never cached, and separate
+// enough that "who pulled the signature images" is answerable from access logs.
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -17,6 +19,7 @@ export async function GET(
     const who = await authenticate(req);
     if (!who) return NextResponse.json({ error: "unauthorized" }, { status: 401 });
     const { id } = await params;
+    if (!ObjectId.isValid(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
     const db = await getDb();
     const e = await db.collection("envelopes").findOne({ _id: new ObjectId(id) });
     if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
@@ -24,26 +27,22 @@ export async function GET(
     if (denied) {
       return NextResponse.json({ error: denied.error }, { status: denied.status });
     }
-    const base = publicBase(req.headers);
+    const signers = (e.signers ?? []) as Array<{
+      idx: number;
+      name: string;
+      status: string;
+      signedAt?: Date | null;
+      values?: Record<string, string>;
+    }>;
     return NextResponse.json(
       {
-        expiresAt: e.expiresAt ?? null,
-        signers: (
-          e.signers as Array<{
-            idx: number;
-            name: string;
-            status: string;
-            token: string;
-            accessCodeHash?: string | null;
-          }>
-        ).map((s) => ({
+        envelopeId: String(e._id),
+        signers: signers.map((s) => ({
           idx: s.idx,
           name: s.name,
           status: s.status,
-          signingUrl: `${base}/sign/${s.token}`,
-          // The code itself is never recoverable (it is HMACed with the
-          // token); the sender only learns whether one is set.
-          accessCodeRequired: Boolean(s.accessCodeHash),
+          signedAt: s.signedAt ?? null,
+          values: s.values ?? {},
         })),
       },
       { headers: { "Cache-Control": "private, no-store" } }

@@ -17,15 +17,34 @@ export const WEBHOOK_EVENTS = [
 ] as const;
 export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
 
-// Contract payload: { event, envelopeId, signerIdx?, at, metadata }.
-// Serialized ONCE at enqueue time — the stored string is what gets signed and
-// what gets POSTed, byte for byte, on every attempt. Signing a re-serialization
-// would risk key-order drift breaking the consumer's verification.
+// v0.2 adds `consent` to the AUDIT trail only. It is deliberately not a
+// webhook event: consent fires on a page the signer is still sitting on, it
+// carries no state a consumer can act on, and adding it to the delivered set
+// would double every consumer's webhook volume for no decision.
+export const AUDIT_ONLY_EVENTS = ["consent"] as const;
+export type AuditOnlyEvent = (typeof AUDIT_ONLY_EVENTS)[number];
+export type EnvelopeEvent = WebhookEvent | AuditOnlyEvent;
+
+export function isWebhookEvent(event: EnvelopeEvent): event is WebhookEvent {
+  return (WEBHOOK_EVENTS as readonly string[]).includes(event);
+}
+
+// Contract payload: { event, envelopeId, signerIdx?, at, executedSha256?,
+// metadata }. Serialized ONCE at enqueue time — the stored string is what gets
+// signed and what gets POSTed, byte for byte, on every attempt. Signing a
+// re-serialization would risk key-order drift breaking the consumer's
+// verification.
+//
+// executedSha256 rides only on `completed` (v0.2): it is the SHA-256 of the
+// exact bytes GET /api/envelopes/:id/document returns once the envelope is
+// executed, so a consumer archiving that PDF can verify what it stored against
+// a digest that arrived over a signed channel.
 export function buildWebhookBody(input: {
   event: WebhookEvent;
   envelopeId: string;
   signerIdx?: number | null;
   at: Date;
+  executedSha256?: string | null;
   metadata: unknown;
 }): string {
   return JSON.stringify({
@@ -33,6 +52,7 @@ export function buildWebhookBody(input: {
     envelopeId: input.envelopeId,
     ...(input.signerIdx == null ? {} : { signerIdx: input.signerIdx }),
     at: input.at.toISOString(),
+    ...(input.executedSha256 ? { executedSha256: input.executedSha256 } : {}),
     metadata: input.metadata && typeof input.metadata === "object" ? input.metadata : {},
   });
 }

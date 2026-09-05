@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
-import { authenticate } from "@/lib/apiauth";
+import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
 
 // Lifecycle audit trail (envelope_events), newest first — the dashboard's
 // timeline. Same ownership rule as the envelope read: consumers only see
 // their own envelopes.
+//
+// This view stays capped at 100 because it feeds a UI. The complete,
+// unpaginated record for archiving is GET /api/envelopes/:id/audit (v0.2).
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -17,10 +20,11 @@ export async function GET(
     const db = await getDb();
     const e = await db
       .collection("envelopes")
-      .findOne({ _id: new ObjectId(id) }, { projection: { createdBy: 1 } });
+      .findOne({ _id: new ObjectId(id) }, { projection: { createdBy: 1, orgId: 1 } });
     if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (who.kind === "consumer" && e.createdBy !== `consumer:${who.name}`) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    const denied = envelopeDenial(who, e, requestedOrgId(req));
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
     }
     const events = await db
       .collection("envelope_events")

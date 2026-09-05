@@ -4,10 +4,13 @@ import {
   SIGNATURE_HEADER,
   buildWebhookBody,
   deliveryTransition,
+  isWebhookEvent,
   shouldMarkViewed,
   signBody,
+  type EnvelopeEvent,
   type WebhookEvent,
 } from "./webhooksig";
+import { readStoredSecret } from "./secrets";
 
 // Lifecycle events + webhook dispatch (Phase 4).
 //
@@ -55,7 +58,7 @@ export type DeliveryDoc = {
 export async function recordEvent(
   db: Db,
   envelopeId: string,
-  event: WebhookEvent,
+  event: EnvelopeEvent,
   opts: { signerIdx?: number | null; at?: Date; meta?: Record<string, unknown> } = {}
 ): Promise<Date> {
   const at = opts.at ?? new Date();
@@ -69,11 +72,18 @@ export async function recordEvent(
   return at;
 }
 
+// v0.2: consumer webhook secrets are AES-256-GCM encrypted at rest under
+// REDSIGN_SECRETS_KEY (lib/secrets.ts). Rows still carrying the v0 plaintext
+// `webhookSecret` keep working, so the existing redFinance consumer does not
+// break on deploy; scripts/mint-consumer.mjs only ever writes the encrypted
+// form. They stay reversible rather than hashed because redSign has to compute
+// the HMAC on outgoing bodies; only API keys are hashed.
 async function resolveSecret(db: Db, createdBy: string): Promise<string | null> {
   if (createdBy.startsWith("consumer:")) {
     const row = await db.collection("consumers").findOne({ name: createdBy.slice("consumer:".length) });
-    const s = row?.webhookSecret;
-    return typeof s === "string" && s.length >= MIN_SECRET_LEN ? s : null;
+    const { secret, error } = readStoredSecret(row, process.env.REDSIGN_SECRETS_KEY, MIN_SECRET_LEN);
+    if (!secret) console.error(`[webhooks] ${createdBy}: ${error ?? "no webhook secret"}`);
+    return secret;
   }
   const fallback = process.env.WEBHOOK_FALLBACK_SECRET ?? "";
   return fallback.length >= MIN_SECRET_LEN ? fallback : null;
@@ -85,14 +95,27 @@ async function resolveSecret(db: Db, createdBy: string): Promise<string | null> 
 // hiccup must not fail the signing transition that triggered it.
 export async function emitEnvelopeEvent(
   envelope: WebhookEnvelope,
-  event: WebhookEvent,
-  opts: { signerIdx?: number | null; at?: Date } = {}
+  event: EnvelopeEvent,
+  opts: {
+    signerIdx?: number | null;
+    at?: Date;
+    // Audit-trail extras (envelope_events.meta). `executedSha256` also rides
+    // the `completed` webhook body.
+    meta?: Record<string, unknown>;
+    executedSha256?: string | null;
+  } = {}
 ): Promise<void> {
   try {
     const db = await getDb();
     const envelopeId = String(envelope._id);
-    const at = await recordEvent(db, envelopeId, event, opts);
+    const meta = {
+      ...(opts.meta ?? {}),
+      ...(opts.executedSha256 ? { executedSha256: opts.executedSha256 } : {}),
+    };
+    const at = await recordEvent(db, envelopeId, event, { ...opts, meta });
 
+    // Audit-only events (consent) stop here: recorded, never delivered.
+    if (!isWebhookEvent(event)) return;
     const url = typeof envelope.webhookUrl === "string" && envelope.webhookUrl ? envelope.webhookUrl : null;
     if (!url) return;
     const createdBy = typeof envelope.createdBy === "string" ? envelope.createdBy : "";
@@ -102,6 +125,7 @@ export async function emitEnvelopeEvent(
       envelopeId,
       signerIdx: opts.signerIdx,
       at,
+      executedSha256: opts.executedSha256 ?? null,
       metadata: envelope.metadata,
     });
     if (!secret) {

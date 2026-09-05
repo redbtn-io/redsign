@@ -15,6 +15,12 @@
 //
 // The guard runs against the URI the memory server actually returns, not
 // against what we asked for.
+//
+// `npm run test:db` runs the files with --test-concurrency=1 on purpose: each
+// file starts its own mongod, and the self-hosted CI runners are under a 3 GB
+// MemoryMax, where two live mongods plus node wedge the job instead of failing
+// it. --test-timeout turns any future wedge into a failed step rather than a
+// 30-minute job timeout with no output.
 
 import { MongoMemoryServer } from "mongodb-memory-server";
 import { MongoClient } from "mongodb";

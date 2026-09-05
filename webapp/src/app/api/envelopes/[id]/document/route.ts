@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { Readable } from "node:stream";
 import { getDb } from "@/lib/db";
-import { authenticate, ownsEnvelope } from "@/lib/apiauth";
+import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
 import { readPdf } from "@/lib/envelopes";
 
 // Serves the executed PDF once completed, else the original.
@@ -17,8 +17,11 @@ export async function GET(
     const db = await getDb();
     const e = await db.collection("envelopes").findOne({ _id: new ObjectId(id) });
     if (!e) return new NextResponse("Not found", { status: 404 });
-    if (!ownsEnvelope(who, e)) {
-      return new NextResponse("Not found", { status: 404 });
+    const denied = envelopeDenial(who, e, requestedOrgId(req));
+    if (denied) {
+      return new NextResponse(denied.status === 404 ? "Not found" : denied.error, {
+        status: denied.status,
+      });
     }
     const fileId = e.executedFileId ?? e.documentFileId;
     const pdf = await readPdf(String(fileId));

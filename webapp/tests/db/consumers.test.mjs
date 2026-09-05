@@ -94,6 +94,64 @@ describe("mint-consumer", () => {
     assert.ok(after.createdAt instanceof Date);
   });
 
+  test("rotating with no tenancy flags keeps the consumer a platform consumer", async () => {
+    // `--name redoffice --rotate` is the documented rotation. If it rewrote
+    // platform to false, redSign would stop requiring metadata.orgId from
+    // redOffice and every later envelope would carry no tenant at all, with
+    // nothing in the output saying so.
+    const r = await mintConsumer(h.db, { name: "redoffice", rotate: true, secretsKey: SECRETS_KEY });
+    assert.equal(r.platform, true, "rotation must not demote a platform consumer");
+    assert.equal(r.orgId, null);
+    assert.equal(r.tenancyInherited, true);
+    const after = await h.db.collection("consumers").findOne({ name: "redoffice" });
+    assert.equal(after.platform, true);
+    assert.equal(after.orgId, null);
+  });
+
+  test("rotating with flags that disagree with the stored row is refused", async () => {
+    await assert.rejects(
+      mintConsumer(h.db, {
+        name: "redoffice",
+        orgId: "org_abc123",
+        rotate: true,
+        secretsKey: SECRETS_KEY,
+      }),
+      /refusing to change tenancy on rotate/
+    );
+    const row = await h.db.collection("consumers").findOne({ name: "redoffice" });
+    assert.equal(row.platform, true, "the refused rotate must not have touched the row");
+  });
+
+  test("--retenant changes tenancy on purpose", async () => {
+    const r = await mintConsumer(h.db, {
+      name: "redoffice",
+      orgId: "org_moved",
+      rotate: true,
+      retenant: true,
+      secretsKey: SECRETS_KEY,
+    });
+    assert.equal(r.platform, false);
+    assert.equal(r.orgId, "org_moved");
+    // Put it back: the rest of the suite expects the platform consumer.
+    const back = await mintConsumer(h.db, {
+      name: "redoffice",
+      platform: true,
+      rotate: true,
+      retenant: true,
+      secretsKey: SECRETS_KEY,
+    });
+    assert.equal(back.platform, true);
+    assert.equal(back.orgId, null);
+  });
+
+  test("a malformed --org-id is refused before anything is written", async () => {
+    await assert.rejects(
+      mintConsumer(h.db, { name: "badorg", orgId: "not a valid id!", secretsKey: SECRETS_KEY }),
+      /--org-id must be/
+    );
+    assert.equal(await h.db.collection("consumers").countDocuments({ name: "badorg" }), 0);
+  });
+
   test("a single-tenant consumer pins an orgId; platform and orgId are exclusive", async () => {
     const r = await mintConsumer(h.db, {
       name: "acme",

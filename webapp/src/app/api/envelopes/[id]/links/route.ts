@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
-import { authenticate, ownsEnvelope } from "@/lib/apiauth";
+import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
 import { publicBase } from "@/lib/http";
 
 // Signing links for an envelope's signers — the one read that intentionally
@@ -20,8 +20,9 @@ export async function GET(
     const db = await getDb();
     const e = await db.collection("envelopes").findOne({ _id: new ObjectId(id) });
     if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (!ownsEnvelope(who, e)) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    const denied = envelopeDenial(who, e, requestedOrgId(req));
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
     }
     const base = publicBase(req.headers);
     return NextResponse.json(

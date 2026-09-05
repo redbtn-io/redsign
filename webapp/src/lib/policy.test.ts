@@ -13,7 +13,12 @@ import {
   metadataOrgId,
   normalizeAccessCode,
   parseHostAllowlist,
+  envelopeAccessDenial,
+  orgIdError,
+  orgScopeFilter,
+  ownsEnvelopeFor,
   platformOrgIdError,
+  resolveEnvelopeOrgId,
   resolveExpiresAt,
   tokenBlock,
   webhookUrlError,
@@ -176,4 +181,133 @@ test('platformOrgIdError only bites platform consumers', () => {
     platformOrgIdError({ platform: true }, { orgId: 'not a valid id!' }) ?? '',
     /not a valid org id/
   );
+});
+
+// --- tenant attribution and tenant scope ----------------------------------
+
+const PLATFORM = { kind: 'consumer', name: 'redoffice', platform: true, orgId: null } as const;
+const PINNED = { kind: 'consumer', name: 'acme', platform: false, orgId: 'org_abc' } as const;
+const PLAIN = { kind: 'consumer', name: 'redfinance', platform: false, orgId: null } as const;
+const SENDER = { kind: 'sender', email: 'george@redbtn.io' } as const;
+
+test('orgIdError accepts null and rejects a malformed id', () => {
+  assert.equal(orgIdError(null), null);
+  assert.equal(orgIdError('org_abc-1.2:3'), null);
+  assert.match(orgIdError('not a valid id!') ?? '', /not a valid org id/);
+  assert.match(orgIdError('x'.repeat(65)) ?? '', /not a valid org id/);
+});
+
+test('a pinned consumer cannot attribute an envelope to another org', () => {
+  // The consumer row wins over the request body, and a disagreeing assertion
+  // is refused rather than ignored: a wrong tenant on an audit record is worse
+  // than a rejected send.
+  assert.deepEqual(resolveEnvelopeOrgId(PINNED, {}), { orgId: 'org_abc', error: null });
+  assert.deepEqual(resolveEnvelopeOrgId(PINNED, { orgId: 'org_abc' }), {
+    orgId: 'org_abc',
+    error: null,
+  });
+  const bad = resolveEnvelopeOrgId(PINNED, { orgId: 'org_victim' });
+  assert.equal(bad.orgId, null);
+  assert.match(bad.error ?? '', /does not match this consumer's org \(org_abc\)/);
+});
+
+test('a platform consumer must assert a well formed org, and it is stored', () => {
+  assert.match(resolveEnvelopeOrgId(PLATFORM, {}).error ?? '', /metadata\.orgId is required/);
+  assert.match(
+    resolveEnvelopeOrgId(PLATFORM, { orgId: 'not valid!' }).error ?? '',
+    /not a valid org id/
+  );
+  assert.deepEqual(resolveEnvelopeOrgId(PLATFORM, { orgId: 'org_t1' }), {
+    orgId: 'org_t1',
+    error: null,
+  });
+});
+
+test('an unpinned caller may attribute freely, but only a valid org id is stored', () => {
+  assert.deepEqual(resolveEnvelopeOrgId(PLAIN, {}), { orgId: null, error: null });
+  assert.deepEqual(resolveEnvelopeOrgId(PLAIN, { orgId: 'org_x' }), { orgId: 'org_x', error: null });
+  assert.deepEqual(resolveEnvelopeOrgId(SENDER, { orgId: 'org_x' }), {
+    orgId: 'org_x',
+    error: null,
+  });
+  // An arbitrary string of any length must not land in envelope.orgId.
+  assert.match(resolveEnvelopeOrgId(SENDER, { orgId: 'x'.repeat(65) }).error ?? '', /not a valid/);
+});
+
+test('ownership is checked before tenancy, and answers 404', () => {
+  const theirs = { createdBy: 'consumer:someone-else', orgId: 'org_t1' };
+  assert.equal(ownsEnvelopeFor(PLATFORM, theirs), false);
+  assert.deepEqual(envelopeAccessDenial(PLATFORM, theirs, 'org_t1'), {
+    status: 404,
+    error: 'not found',
+  });
+  assert.equal(ownsEnvelopeFor(SENDER, theirs), true);
+});
+
+test('a platform consumer must name its tenant and cannot read another one', () => {
+  const t1 = { createdBy: 'consumer:redoffice', orgId: 'org_t1' };
+  const t2 = { createdBy: 'consumer:redoffice', orgId: 'org_t2' };
+  // One credential, many tenants: createdBy alone lets it read everything.
+  assert.equal(ownsEnvelopeFor(PLATFORM, t2), true);
+  assert.deepEqual(envelopeAccessDenial(PLATFORM, t1, null), {
+    status: 400,
+    error: 'orgId query parameter is required for platform consumers',
+  });
+  assert.equal(envelopeAccessDenial(PLATFORM, t1, 'org_t1'), null);
+  assert.deepEqual(envelopeAccessDenial(PLATFORM, t2, 'org_t1'), {
+    status: 404,
+    error: 'not found',
+  });
+  assert.deepEqual(envelopeAccessDenial(PLATFORM, t1, 'bad id!'), {
+    status: 400,
+    error: 'orgId is not a valid org id',
+  });
+});
+
+test('a pinned consumer is confined to its pin but keeps its pre-v0.2 envelopes', () => {
+  const mine = { createdBy: 'consumer:acme', orgId: 'org_abc' };
+  const other = { createdBy: 'consumer:acme', orgId: 'org_other' };
+  const legacy = { createdBy: 'consumer:acme' }; // stored before v0.2: no orgId
+  assert.equal(envelopeAccessDenial(PINNED, mine, null), null);
+  assert.equal(envelopeAccessDenial(PINNED, legacy, null), null);
+  assert.deepEqual(envelopeAccessDenial(PINNED, other, null), { status: 404, error: 'not found' });
+  assert.equal(envelopeAccessDenial(PINNED, mine, 'org_abc'), null);
+  assert.deepEqual(envelopeAccessDenial(PINNED, legacy, 'org_abc'), {
+    status: 404,
+    error: 'not found',
+  });
+});
+
+test('a sender may narrow to one org and is otherwise unscoped', () => {
+  const e = { createdBy: 'consumer:redoffice', orgId: 'org_t1' };
+  assert.equal(envelopeAccessDenial(SENDER, e, null), null);
+  assert.equal(envelopeAccessDenial(SENDER, e, 'org_t1'), null);
+  assert.deepEqual(envelopeAccessDenial(SENDER, e, 'org_t2'), { status: 404, error: 'not found' });
+});
+
+test('orgScopeFilter narrows a list the same way the read gate narrows one envelope', () => {
+  assert.deepEqual(orgScopeFilter(SENDER, null), { filter: {}, error: null });
+  assert.deepEqual(orgScopeFilter(SENDER, 'org_t1'), { filter: { orgId: 'org_t1' }, error: null });
+  assert.deepEqual(orgScopeFilter(PLAIN, null), { filter: {}, error: null });
+  assert.deepEqual(orgScopeFilter(PLATFORM, 'org_t1'), {
+    filter: { orgId: 'org_t1' },
+    error: null,
+  });
+  const missing = orgScopeFilter(PLATFORM, null);
+  assert.equal(missing.filter, null);
+  assert.equal(missing.error?.status, 400);
+  assert.deepEqual(orgScopeFilter(PINNED, null), {
+    filter: { orgId: { $in: ['org_abc', null] } },
+    error: null,
+  });
+  assert.deepEqual(orgScopeFilter(PINNED, 'org_abc'), {
+    filter: { orgId: { $in: ['org_abc', null] } },
+    error: null,
+  });
+  const mismatch = orgScopeFilter(PINNED, 'org_victim');
+  assert.equal(mismatch.filter, null);
+  assert.equal(mismatch.error?.status, 400);
+  const malformed = orgScopeFilter(SENDER, 'bad id!');
+  assert.equal(malformed.filter, null);
+  assert.equal(malformed.error?.status, 400);
 });

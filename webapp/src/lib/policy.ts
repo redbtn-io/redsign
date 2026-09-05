@@ -196,6 +196,11 @@ export function metadataOrgId(metadata: unknown): string | null {
   return s ? s : null;
 }
 
+export function orgIdError(orgId: string | null): string | null {
+  if (orgId === null) return null;
+  return ORG_ID_RE.test(orgId) ? null : "orgId is not a valid org id";
+}
+
 export function platformOrgIdError(
   consumer: { platform?: boolean; orgId?: string | null } | null,
   metadata: unknown
@@ -207,6 +212,140 @@ export function platformOrgIdError(
   }
   if (!ORG_ID_RE.test(orgId)) return "metadata.orgId is not a valid org id";
   return null;
+}
+
+// --- who an envelope belongs to, and which tenant a caller is acting for ---
+//
+// Three separable questions, kept pure here so they are unit tested rather
+// than re-derived in seven route files:
+//
+//   1. what orgId does a NEW envelope get?          resolveEnvelopeOrgId
+//   2. may this caller read THIS envelope?          envelopeAccessDenial
+//   3. how is a LIST or a bulk write narrowed?      orgScopeFilter
+//
+// The identity shape is structural on purpose: lib/apiauth.ts owns ApiIdentity
+// and imports next/server, which cannot be imported by `node --test`.
+
+export type Actor =
+  | { kind: "sender"; email?: string }
+  | { kind: "consumer"; name: string; platform?: boolean; orgId?: string | null };
+
+export type Denial = { status: number; error: string };
+
+// A consumer only ever sees the envelopes it created; @redbtn.io senders see
+// everything (there is exactly one sender tenant in v0.2).
+export function ownsEnvelopeFor(actor: Actor, envelope: { createdBy?: unknown }): boolean {
+  if (actor.kind === "sender") return true;
+  return envelope.createdBy === `consumer:${actor.name}`;
+}
+
+export function envelopeOrgId(envelope: { orgId?: unknown }): string | null {
+  return typeof envelope.orgId === "string" && envelope.orgId ? envelope.orgId : null;
+}
+
+// The tenant a new envelope is attributed to.
+//
+// A pinned single-tenant consumer (--org-id) is authoritative: its own row
+// wins over anything in the request body, and an assertion that disagrees is
+// refused rather than quietly ignored, because "wrong tenant" and "no tenant"
+// are both wrong on an audit record. A platform consumer is the opposite case:
+// the row names no tenant, so the request must, and the assertion is
+// validated. Everyone else may attribute an envelope freely, but the value
+// still has to be a well formed org id before it reaches the database.
+export function resolveEnvelopeOrgId(
+  actor: Actor,
+  metadata: unknown
+): { orgId: string | null; error: null } | { orgId: null; error: string } {
+  const asserted = metadataOrgId(metadata);
+  const shapeErr = orgIdError(asserted);
+  if (shapeErr) return { orgId: null, error: "metadata.orgId is not a valid org id" };
+
+  if (actor.kind === "consumer") {
+    if (actor.platform) {
+      const err = platformOrgIdError(actor, metadata);
+      if (err) return { orgId: null, error: err };
+      return { orgId: asserted, error: null };
+    }
+    const pinned = actor.orgId ?? null;
+    if (pinned) {
+      if (asserted && asserted !== pinned) {
+        return {
+          orgId: null,
+          error: `metadata.orgId does not match this consumer's org (${pinned})`,
+        };
+      }
+      return { orgId: pinned, error: null };
+    }
+  }
+  return { orgId: asserted, error: null };
+}
+
+// May this caller read this envelope, given the org it says it is acting for?
+//
+// `requested` is the ?orgId= query parameter (null when absent). Ownership is
+// checked first and answers 404, never 403: a consumer must not be able to
+// probe for the existence of another consumer's envelope ids.
+//
+// A platform consumer holds one credential for many tenants, so createdBy
+// alone is not a tenant boundary — it MUST name the tenant it is acting for
+// and the envelope must belong to that tenant. A pinned consumer is checked
+// against its pin, except on envelopes stored before v0.2, which carry no
+// orgId at all and stay readable by the consumer that created them.
+export function envelopeAccessDenial(
+  actor: Actor,
+  envelope: { createdBy?: unknown; orgId?: unknown },
+  requested: string | null
+): Denial | null {
+  if (!ownsEnvelopeFor(actor, envelope)) return { status: 404, error: "not found" };
+  if (orgIdError(requested)) return { status: 400, error: "orgId is not a valid org id" };
+
+  const envOrg = envelopeOrgId(envelope);
+  if (actor.kind === "consumer" && actor.platform) {
+    if (!requested) {
+      return { status: 400, error: "orgId query parameter is required for platform consumers" };
+    }
+    if (envOrg !== requested) return { status: 404, error: "not found" };
+    return null;
+  }
+
+  const pinned = actor.kind === "consumer" ? actor.orgId ?? null : null;
+  if (pinned && envOrg && envOrg !== pinned) return { status: 404, error: "not found" };
+  if (requested && envOrg !== requested) return { status: 404, error: "not found" };
+  return null;
+}
+
+// Mongo filter fragment for a list or a scoped write. Same rules as
+// envelopeAccessDenial, expressed as a query: a platform consumer must name a
+// tenant, a pinned consumer is confined to its pin (plus its own pre-v0.2
+// envelopes, which have no orgId), and anyone may narrow to one org.
+export function orgScopeFilter(
+  actor: Actor,
+  requested: string | null
+): { filter: Record<string, unknown>; error: null } | { filter: null; error: Denial } {
+  if (orgIdError(requested)) {
+    return { filter: null, error: { status: 400, error: "orgId is not a valid org id" } };
+  }
+  if (actor.kind === "consumer" && actor.platform) {
+    if (!requested) {
+      return {
+        filter: null,
+        error: { status: 400, error: "orgId query parameter is required for platform consumers" },
+      };
+    }
+    return { filter: { orgId: requested }, error: null };
+  }
+  const pinned = actor.kind === "consumer" ? actor.orgId ?? null : null;
+  if (pinned) {
+    if (requested && requested !== pinned) {
+      return {
+        filter: null,
+        error: { status: 400, error: `orgId does not match this consumer's org (${pinned})` },
+      };
+    }
+    // null covers the envelopes this consumer created before it was pinned.
+    return { filter: { orgId: { $in: [pinned, null] } }, error: null };
+  }
+  return { filter: requested ? { orgId: requested } : {}, error: null };
 }
 
 // HOOK, deliberately inert in v0.2.

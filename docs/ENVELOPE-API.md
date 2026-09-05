@@ -184,14 +184,32 @@ just as a status. Everything below falls into one of those two buckets.
 
 ## What a v0 consumer has to change
 
-Nothing, with two exceptions:
+Four things, and only the first two need code:
 
-1. **`webhookUrl` must be https and on the allowlist.** An existing envelope
+1. **New envelopes now expire.** `POST /api/envelopes` with no `expiresAt`
+   sets one 90 days out (`REDSIGN_DEFAULT_EXPIRY_DAYS`), where v0 envelopes
+   never expired. After that the signing link answers 404 `{error:"expired"}`
+   and neither side is notified. A consumer that wants the v0 behaviour sends
+   `expiresAt: null` explicitly; one that wants a different window sends
+   `expiresAt` or `expiresInDays`. **redFinance should decide per envelope
+   kind**: a W-9 chased over a slow contractor onboarding can outlive 90 days,
+   and an agreement link probably should not. Envelopes *already stored* are
+   untouched and never expire (see "Expiry applies to new envelopes only").
+2. **Signer emails are validated.** `signers[].email` must now look like an
+   address (`/^[^@\s]+@[^@\s.]+\.[^@\s]+$/`); v0 stored whatever it was
+   given. A consumer passing a placeholder, a bare local part or a display
+   name gets a 400 `signer N: email is not a valid address` where v0 accepted
+   it. `email` is still optional; only a present one is checked.
+3. **`webhookUrl` must be https and on the allowlist.** An existing envelope
    keeps delivering to the URL it was created with; only *new* envelopes are
    validated. redFinance's `https://finance.redbtn.io/...` already passes.
-2. **`signers[].values` no longer appears on envelope reads.** A consumer that
+4. **`signers[].values` no longer appears on envelope reads.** A consumer that
    was reading signature PNGs off `GET /api/envelopes/:id` moves to
    `GET /api/envelopes/:id/values`. No known consumer does this today.
+
+A **platform** consumer has one more requirement, but no v0 consumer is one:
+every envelope read and the list must carry `?orgId=` (see "Tenant scope").
+A single-tenant consumer, pinned or not, is unaffected.
 
 The `completed` webhook payload gains one field (`executedSha256`). Payloads
 for every other event are byte for byte what they were, so an existing HMAC
@@ -202,8 +220,8 @@ verifier keeps passing.
 | Call | Change |
 |---|---|
 | `POST /api/envelopes` | accepts `expiresAt` / `expiresInDays` and `signers[].accessCode`; requires `metadata.orgId` from platform consumers; `webhookUrl` must be https and allowlisted; returns `expiresAt`, `documentSha256` and per-signer `accessCodeRequired` |
-| `GET /api/envelopes` | `signers[].values` and `signers[].accessCodeHash` projected out |
-| `GET /api/envelopes/:id` | same projection |
+| `GET /api/envelopes` | `signers[].values` and `signers[].accessCodeHash` projected out; accepts `?orgId=` to narrow to one tenant, **required** from a platform consumer |
+| `GET /api/envelopes/:id` | same projection; accepts `?orgId=`, **required** from a platform consumer and matched against the envelope |
 | `GET /api/envelopes/:id/values` | **new.** Owner-only. The one route that returns the collected field values, signature PNGs included |
 | `GET /api/envelopes/:id/audit` | **new.** Owner-only. The complete certificate record: both digests, every signer's consent, every event in order with no limit, every webhook delivery outcome |
 | `GET /api/envelopes/:id/events` | unchanged (newest first, capped at 100). It feeds the dashboard. `/audit` is the archival read |
@@ -212,6 +230,7 @@ verifier keeps passing.
 | `GET /api/sign/:token` | returns the `disclosure` to show before consent, plus `envelope.expiresAt` and `signer.consentAt`; answers 401 `{requiresAccessCode:true}` when a code is set and not presented; answers 404 `{error:"expired"}` on an expired envelope |
 | `POST /api/sign/:token/consent` | **new.** Records consent at the moment it is given |
 | `POST /api/sign/:token/complete` | records the consent inline only if `/consent` was not called; records `ipChain`; computes `executedSha256` at completion |
+| `POST /api/envelopes/:id/void` | scoped by tenant like the reads: accepts `?orgId=`, **required** from a platform consumer |
 | `GET /api/health` | **no longer behind the auth gate** |
 
 ## Machine consumers: minting, platform flag, org assertion
@@ -236,9 +255,44 @@ encrypted under a key that is then lost cannot sign webhooks.
 
 A **platform consumer** (`platform: true`) is one credential serving many
 tenants. redOffice is the first. Every envelope it creates must carry
-`metadata.orgId`; creation answers 400 without it. A non-platform consumer is
-single tenant and may pin its org on the row instead (`--org-id`), which is
-copied onto the envelopes it creates.
+`metadata.orgId`; creation answers 400 without it, and the asserted value is
+shape-checked (`^[A-Za-z0-9_.:-]{1,64}$`) before it is stored.
+
+A non-platform consumer is single tenant and may pin its org on the row
+instead (`--org-id`). **The pin is authoritative**: it is copied onto every
+envelope that consumer creates, and a request body asserting a *different*
+`metadata.orgId` is refused with a 400 rather than honoured. A pinned
+credential therefore cannot be used to write an envelope, an audit record and a
+`completed` webhook attributed to somebody else's tenant.
+
+`--rotate` reissues **credentials only**. A rotation with no tenancy flags
+keeps the stored `platform`/`orgId`, and one whose flags disagree with the
+stored row is refused with the reason; `--retenant` is the explicit way to
+change tenancy on purpose. A silent demotion of `platform: true` would stop
+redSign requiring `metadata.orgId` and every envelope after it would be filed
+under no tenant at all.
+
+## Tenant scope: `?orgId=` on reads
+
+`envelope.orgId` is a boundary, not a label. Every envelope read
+(`/:id`, `/:id/values`, `/:id/audit`, `/:id/links`, `/:id/events`,
+`/:id/document`), the list, and `POST /:id/void` apply it:
+
+- a **platform consumer** must send `?orgId=<org>`. Without it the answer is
+  400; with it, the list returns only that tenant's envelopes and a single
+  envelope belonging to another tenant answers 404. `createdBy` cannot separate
+  tenants here — one credential created all of them — so this parameter is the
+  only thing standing between redOffice's tenants;
+- a **pinned consumer** is confined to its pin. Its own envelopes stored before
+  v0.2 carry no `orgId` and stay readable, which is what keeps redFinance's
+  existing envelopes working;
+- an **unpinned consumer** and a **sender** may pass `?orgId=` to narrow, and
+  are otherwise unscoped. Ownership still applies to consumers first: a
+  non-owner gets 404, never 403, so envelope ids cannot be probed.
+
+Run `node scripts/ensure-indexes.mjs` once per deployment: it creates
+`envelopes.{orgId, createdAt}` and the other indexes these reads rely on. It is
+idempotent and safe to re-run.
 
 **Directory validation is a documented hook, not yet a call.** The next version
 validates the asserted `orgId` against redOffice's directory endpoint over HTTP
@@ -382,6 +436,12 @@ stored envelopes would silently kill signing links already sitting in people's
 inboxes, including the pending W-9 envelope `6a96f5fad8f61708c97e7bc5`, which
 must remain signable. A missing `expiresAt` means "never", not "expired", and
 there is a test that says so.
+
+**New** envelopes are the flip side of that: a consumer that says nothing gets
+90 days. That is a behaviour change for redFinance, whose v0 W-9 and agreement
+links never expired, and it is silent — the link simply stops working, with no
+notice to sender or signer. Send `expiresAt: null` to keep the v0 behaviour for
+a given envelope, or raise `REDSIGN_DEFAULT_EXPIRY_DAYS` for the deployment.
 
 An expired link answers 404 with `{error: "expired"}` on `/api/sign/:token`,
 the same way a voided one answers `{error: "voided"}`. The envelope's status is

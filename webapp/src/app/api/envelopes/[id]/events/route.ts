@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
-import { authenticate, ownsEnvelope } from "@/lib/apiauth";
+import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
 
 // Lifecycle audit trail (envelope_events), newest first — the dashboard's
 // timeline. Same ownership rule as the envelope read: consumers only see
@@ -20,10 +20,11 @@ export async function GET(
     const db = await getDb();
     const e = await db
       .collection("envelopes")
-      .findOne({ _id: new ObjectId(id) }, { projection: { createdBy: 1 } });
+      .findOne({ _id: new ObjectId(id) }, { projection: { createdBy: 1, orgId: 1 } });
     if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (!ownsEnvelope(who, e)) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    const denied = envelopeDenial(who, e, requestedOrgId(req));
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
     }
     const events = await db
       .collection("envelope_events")

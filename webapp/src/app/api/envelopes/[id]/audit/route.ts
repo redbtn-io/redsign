@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
-import { authenticate, ownsEnvelope } from "@/lib/apiauth";
+import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
 import { readPdfBuffer, sha256Hex } from "@/lib/envelopes";
 
 // The signature certificate as JSON, complete and unpaginated (v0.2).
@@ -26,8 +26,10 @@ export async function GET(
     if (!ObjectId.isValid(id)) return NextResponse.json({ error: "not found" }, { status: 404 });
     const db = await getDb();
     const e = await db.collection("envelopes").findOne({ _id: new ObjectId(id) });
-    if (!e || !ownsEnvelope(who, e)) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
+    const denied = envelopeDenial(who, e, requestedOrgId(req));
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
     }
 
     // Envelopes created before v0.2 have no stored digests. Recompute rather

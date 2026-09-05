@@ -19,6 +19,14 @@
 //   orgId             single-tenant pin, for a consumer that only ever acts for
 //                     one org. Mutually exclusive with --platform.
 //
+// --rotate reissues CREDENTIALS ONLY. It never changes what the consumer is:
+// a rotate with no tenancy flags keeps the stored platform/orgId, and a rotate
+// whose flags disagree with the stored row is refused. Silently rewriting
+// `platform: true` to `platform: false` would stop redSign requiring
+// metadata.orgId from redOffice, and every envelope after that would be
+// created with no tenant attribution. Pass --retenant to change tenancy on
+// purpose.
+//
 // The service key and the webhook secret are printed ONCE, at mint time, and
 // are unrecoverable afterwards: the key is hashed and the secret is encrypted
 // under a key this script does not print. Copy them straight into the
@@ -32,6 +40,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import { MongoClient } from "mongodb";
 import { encryptSecret, parseSecretsKey } from "../src/lib/secrets.ts";
+import { ORG_ID_RE } from "../src/lib/policy.ts";
 
 export function hashKey(key) {
   return crypto.createHash("sha256").update(key).digest("hex");
@@ -49,6 +58,43 @@ export function mintWebhookSecret() {
   return crypto.randomBytes(32).toString("hex");
 }
 
+export function validateOrgId(orgId) {
+  if (orgId == null) return null;
+  const s = String(orgId).trim();
+  if (!ORG_ID_RE.test(s)) {
+    throw new Error("--org-id must be 1-64 chars of [A-Za-z0-9_.:-]");
+  }
+  return s;
+}
+
+// What a rotation is allowed to do to tenancy. Returns the platform/orgId the
+// row should end up with, or throws.
+export function resolveTenancy(existing, opts) {
+  const platformFlag = opts.platform === true;
+  const orgIdFlag = validateOrgId(opts.orgId ?? null);
+  if (platformFlag && orgIdFlag) {
+    throw new Error("--platform and --org-id are mutually exclusive: a platform consumer serves many orgs");
+  }
+  if (!existing) return { platform: platformFlag, orgId: orgIdFlag };
+
+  const stored = { platform: existing.platform === true, orgId: existing.orgId ?? null };
+  // No tenancy flags on a rotate: keep what is stored. This is the common
+  // case (`--name redoffice --rotate`) and it must not demote a platform
+  // consumer to a single-tenant one.
+  if (!platformFlag && orgIdFlag === null) return stored;
+  if (platformFlag !== stored.platform || orgIdFlag !== stored.orgId) {
+    if (opts.retenant !== true) {
+      const describe = (t) => (t.platform ? "platform" : t.orgId ? `org ${t.orgId}` : "no org");
+      throw new Error(
+        `refusing to change tenancy on rotate: "${existing.name}" is stored as ${describe(stored)}, ` +
+          `flags say ${describe({ platform: platformFlag, orgId: orgIdFlag })}. ` +
+          "Rotate with no tenancy flags to keep it, or pass --retenant to change it on purpose."
+      );
+    }
+  }
+  return { platform: platformFlag, orgId: orgIdFlag };
+}
+
 export function validateConsumerName(name) {
   if (!name || !/^[a-z0-9][a-z0-9_-]{1,39}$/.test(name)) {
     throw new Error("name must be 2-40 chars of [a-z0-9_-] and start alphanumeric");
@@ -60,17 +106,16 @@ export function validateConsumerName(name) {
 // thing instead of a re-implementation of it.
 export async function mintConsumer(db, opts) {
   const name = validateConsumerName(opts.name);
-  const platform = opts.platform === true;
-  const orgId = opts.orgId ?? null;
-  if (platform && orgId) {
-    throw new Error("--platform and --org-id are mutually exclusive: a platform consumer serves many orgs");
-  }
   const key = parseSecretsKey(opts.secretsKey);
 
   const existing = await db.collection("consumers").findOne({ name });
   if (existing && !opts.rotate) {
     throw new Error(`consumer "${name}" already exists (pass --rotate to issue new credentials)`);
   }
+  // Tenancy is inherited on rotate unless the caller says otherwise, so
+  // reissuing credentials cannot quietly turn a platform consumer into a
+  // single-tenant one.
+  const { platform, orgId } = resolveTenancy(existing, opts);
 
   const serviceKey = mintServiceKey(name);
   const webhookSecret = mintWebhookSecret();
@@ -95,17 +140,26 @@ export async function mintConsumer(db, opts) {
       { upsert: true }
     );
 
-  return { name, platform, orgId, serviceKey, webhookSecret, rotated: Boolean(existing) };
+  return {
+    name,
+    platform,
+    orgId,
+    serviceKey,
+    webhookSecret,
+    rotated: Boolean(existing),
+    tenancyInherited: Boolean(existing) && opts.platform !== true && (opts.orgId ?? null) === null,
+  };
 }
 
 function parseArgs(argv) {
-  const out = { name: null, orgId: null, platform: false, rotate: false };
+  const out = { name: null, orgId: null, platform: false, rotate: false, retenant: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--name") out.name = argv[++i];
     else if (a === "--org-id") out.orgId = argv[++i];
     else if (a === "--platform") out.platform = true;
     else if (a === "--rotate") out.rotate = true;
+    else if (a === "--retenant") out.retenant = true;
     else throw new Error(`unknown argument: ${a}`);
   }
   return out;
@@ -135,7 +189,7 @@ async function main() {
   const opts = parseArgs(process.argv.slice(2));
   if (!opts.name) {
     console.error(
-      "usage: node scripts/mint-consumer.mjs --name <consumer> [--platform | --org-id <id>] [--rotate]"
+      "usage: node scripts/mint-consumer.mjs --name <consumer> [--platform | --org-id <id>] [--rotate] [--retenant]"
     );
     process.exit(1);
   }
@@ -163,6 +217,9 @@ async function main() {
     console.log(`consumer:        ${result.name}${result.rotated ? " (rotated)" : " (created)"}`);
     console.log(`platform:        ${result.platform}`);
     console.log(`orgId:           ${result.orgId ?? "(none)"}`);
+    if (result.tenancyInherited) {
+      console.log("                 (tenancy kept from the existing row; rotation reissues credentials only)");
+    }
     console.log("");
     console.log("Copy these into the consumer's workspace env. They are shown once.");
     console.log(`  REDSIGN_KEY=${result.serviceKey}`);

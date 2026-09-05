@@ -1,15 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
-import { authenticate } from "@/lib/apiauth";
+import { authenticate, envelopeScopeFilter, requestedOrgId } from "@/lib/apiauth";
 import { mintToken, sha256Hex, storePdf, validateFields, validateSigners } from "@/lib/envelopes";
 import { publicBase } from "@/lib/http";
 import {
   defaultExpiryDays,
   expiresInDaysToDate,
   hashAccessCode,
-  metadataOrgId,
   parseHostAllowlist,
-  platformOrgIdError,
+  resolveEnvelopeOrgId,
   resolveExpiresAt,
   webhookUrlError,
 } from "@/lib/policy";
@@ -26,6 +25,14 @@ export async function GET(req: NextRequest) {
     const filter: Record<string, unknown> = {};
     if (q.get("status")) filter.status = q.get("status");
     if (who.kind === "consumer") filter.createdBy = `consumer:${who.name}`;
+    // Tenant scope. createdBy alone is not a boundary for a platform consumer:
+    // one credential covers many orgs, so it has to name the one it is asking
+    // for (?orgId=) and gets only that org's envelopes back.
+    const scope = envelopeScopeFilter(who, requestedOrgId(req));
+    if (scope.error) {
+      return NextResponse.json({ error: scope.error.error }, { status: scope.error.status });
+    }
+    Object.assign(filter, scope.filter);
     const db = await getDb();
     const envelopes = await db
       .collection("envelopes")
@@ -81,13 +88,15 @@ export async function POST(req: NextRequest) {
         ? (payload.metadata as Record<string, unknown>)
         : {};
 
-    // Platform consumers (redOffice) are multi-tenant on one credential, so
-    // every envelope must name its tenant. See lib/policy.ts for the directory
+    // Tenant attribution, decided in one place (lib/policy.resolveEnvelopeOrgId):
+    // a platform consumer (redOffice) is multi-tenant on one credential and
+    // must assert metadata.orgId; a consumer pinned with --org-id is
+    // authoritative and its row wins over the body, so it cannot write an
+    // envelope attributed to somebody else's org; every accepted value is
+    // shape-checked before it is stored. See lib/policy.ts for the directory
     // validation hook this leaves open.
-    if (who.kind === "consumer") {
-      const orgErr = platformOrgIdError(who, metadata);
-      if (orgErr) return NextResponse.json({ error: orgErr }, { status: 400 });
-    }
+    const org = resolveEnvelopeOrgId(who, metadata);
+    if (org.error) return NextResponse.json({ error: org.error }, { status: 400 });
 
     const webhookUrl = payload.webhookUrl ? String(payload.webhookUrl).slice(0, 500) : null;
     if (webhookUrl) {
@@ -158,7 +167,7 @@ export async function POST(req: NextRequest) {
       }),
       fields,
       metadata,
-      orgId: metadataOrgId(metadata) ?? (who.kind === "consumer" ? who.orgId : null),
+      orgId: org.orgId,
       webhookUrl,
       expiresAt,
       createdBy: who.kind === "sender" ? who.email : `consumer:${who.name}`,

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
-import { authenticate, ownsEnvelope } from "@/lib/apiauth";
+import { authenticate, envelopeDenial, requestedOrgId } from "@/lib/apiauth";
 import { ENVELOPE_DETAIL_PROJECTION } from "@/lib/queries";
 
 // v0.2: signers.values (the collected PNG signatures) is projected out here and
@@ -23,8 +23,9 @@ export async function GET(
       .collection("envelopes")
       .findOne({ _id: new ObjectId(id) }, { projection: ENVELOPE_DETAIL_PROJECTION });
     if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (!ownsEnvelope(who, e)) {
-      return NextResponse.json({ error: "not found" }, { status: 404 });
+    const denied = envelopeDenial(who, e, requestedOrgId(req));
+    if (denied) {
+      return NextResponse.json({ error: denied.error }, { status: denied.status });
     }
     return NextResponse.json({ envelope: { ...e, _id: String(e._id) } });
   } catch (e) {

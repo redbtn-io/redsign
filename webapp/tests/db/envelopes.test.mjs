@@ -8,7 +8,7 @@ import {
   consentClaimFilter,
   signerCompletionFilter,
 } from "../../src/lib/queries.ts";
-import { isExpired, tokenBlock } from "../../src/lib/policy.ts";
+import { isExpired, orgScopeFilter, tokenBlock } from "../../src/lib/policy.ts";
 
 // The v0.2 read and write contracts, exercised against a real Mongo (in
 // memory) using the exact projection and filter objects the routes use.
@@ -199,6 +199,49 @@ describe("envelope read and write contracts", () => {
       .updateOne({ _id: future.insertedId }, { $set: { status: "voided" } });
     const voided = await h.db.collection("envelopes").findOne({ _id: future.insertedId });
     assert.equal(tokenBlock(voided), "voided");
+  });
+
+  test("a platform consumer's list is confined to the org it names", async () => {
+    // One credential, many tenants: createdBy is identical on all three rows,
+    // so only the org filter separates them.
+    await h.db.collection("envelopes").deleteMany({});
+    await h.db.collection("envelopes").insertMany([
+      envelopeDoc({ orgId: "org_t1", documentName: "t1.pdf" }),
+      envelopeDoc({ orgId: "org_t2", documentName: "t2.pdf" }),
+      envelopeDoc({ orgId: null, documentName: "legacy.pdf" }),
+    ]);
+    const platform = { kind: "consumer", name: "redoffice", platform: true, orgId: null };
+    const scope = orgScopeFilter(platform, "org_t1");
+    assert.equal(scope.error, null);
+    const rows = await h.db
+      .collection("envelopes")
+      .find({ createdBy: "consumer:redoffice", ...scope.filter })
+      .toArray();
+    assert.deepEqual(
+      rows.map((r) => r.documentName),
+      ["t1.pdf"]
+    );
+    // Without ?orgId= there is no query at all, by design.
+    assert.equal(orgScopeFilter(platform, null).filter, null);
+  });
+
+  test("a pinned consumer sees its org and its own pre-v0.2 envelopes", async () => {
+    await h.db.collection("envelopes").deleteMany({});
+    // A genuine pre-v0.2 row: the orgId key is absent, not null.
+    const legacy = envelopeDoc({ createdBy: "consumer:acme", documentName: "legacy.pdf" });
+    delete legacy.orgId;
+    await h.db.collection("envelopes").insertMany([
+      envelopeDoc({ createdBy: "consumer:acme", orgId: "org_abc", documentName: "mine.pdf" }),
+      envelopeDoc({ createdBy: "consumer:acme", orgId: "org_other", documentName: "theirs.pdf" }),
+      legacy,
+    ]);
+    const pinned = { kind: "consumer", name: "acme", platform: false, orgId: "org_abc" };
+    const scope = orgScopeFilter(pinned, null);
+    const rows = await h.db
+      .collection("envelopes")
+      .find({ createdBy: "consumer:acme", ...scope.filter })
+      .toArray();
+    assert.deepEqual(rows.map((r) => r.documentName).sort(), ["legacy.pdf", "mine.pdf"]);
   });
 
   test("a consumer only ever finds its own envelopes", async () => {

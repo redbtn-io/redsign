@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { GridFSBucket, ObjectId } from "mongodb";
 import { getDb } from "./db";
+import { accessCodeError } from "./policy";
 
 // Envelope model per docs/ENVELOPE-API.md (adopted v0).
 // Field coordinates are page-relative 0..1 so they survive render scaling.
@@ -13,6 +14,10 @@ export interface SignerInput {
   email?: string;
   phone?: string;
   order?: number;
+  // v0.2: optional out-of-band second factor on the signing link. Kept in
+  // plaintext only long enough for the create route to HMAC it with the
+  // freshly minted token; never stored.
+  accessCode?: string;
 }
 
 export interface FieldInput {
@@ -35,11 +40,20 @@ export function validateSigners(raw: unknown): SignerInput[] {
   return raw.map((s, i) => {
     const name = String(s?.name ?? "").trim().slice(0, 200);
     if (!name) throw new Error(`signer ${i}: name required`);
+    const email = s?.email ? String(s.email).trim().slice(0, 200) : undefined;
+    if (email && !/^[^@\s]+@[^@\s.]+\.[^@\s]+$/.test(email)) {
+      throw new Error(`signer ${i}: email is not a valid address`);
+    }
+    if (s?.accessCode != null && s.accessCode !== "") {
+      const err = accessCodeError(s.accessCode);
+      if (err) throw new Error(`signer ${i}: ${err}`);
+    }
     return {
       name,
-      email: s?.email ? String(s.email).slice(0, 200) : undefined,
+      email,
       phone: s?.phone ? String(s.phone).slice(0, 40) : undefined,
       order: Number.isInteger(s?.order) ? s.order : i,
+      accessCode: s?.accessCode ? String(s.accessCode) : undefined,
     };
   });
 }
@@ -80,11 +94,31 @@ export function hashKey(key: string): string {
   return crypto.createHash("sha256").update(key).digest("hex");
 }
 
-export async function verifyConsumerKey(key: string | null): Promise<string | null> {
+// v0.2: the consumer row carries more than a name. `platform` marks a
+// multi-tenant caller (redOffice) whose envelopes must assert metadata.orgId;
+// `orgId` pins a single-tenant consumer to one org.
+export type ConsumerIdentity = {
+  name: string;
+  platform: boolean;
+  orgId: string | null;
+};
+
+export async function verifyConsumerKey(key: string | null): Promise<ConsumerIdentity | null> {
   if (!key || key.length < 16) return null;
   const db = await getDb();
   const row = await db.collection("consumers").findOne({ keyHash: hashKey(key), active: true });
-  return row ? String(row.name) : null;
+  if (!row) return null;
+  return {
+    name: String(row.name),
+    platform: row.platform === true,
+    orgId: typeof row.orgId === "string" && row.orgId ? row.orgId : null,
+  };
+}
+
+// SHA-256 of a stored PDF, hex. Used for documentSha256 at creation and
+// executedSha256 at completion.
+export function sha256Hex(buf: Buffer | Uint8Array): string {
+  return crypto.createHash("sha256").update(buf).digest("hex");
 }
 
 // --- GridFS PDF storage ---

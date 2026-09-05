@@ -5,10 +5,13 @@ import { jwtVerify } from "jose";
 // platform `red_session` JWT (HS256, shared JWT_SECRET, domain-wide
 // .redbtn.io cookie) with an @redbtn.io email gets sender access.
 //
-// Exempt: /sign/<token> + /api/sign/* (public signer links, Phase 3).
+// Exempt: /sign/<token> + /api/sign/* (public signer links, Phase 3) and
+// /api/health (v0.2). Health was behind the gate, so every uptime probe got a
+// 401 interstitial and RedRun could not tell "the app is up" from "the app is
+// wedged"; the route reports only {ok, db} and leaks nothing.
 // AUTH_BYPASS=1 disables the gate for CI/e2e only — never set in prod.
 
-const PUBLIC_PREFIXES = ["/sign/", "/api/sign/"];
+const PUBLIC_PREFIXES = ["/sign/", "/api/sign/", "/api/health"];
 
 const INTERSTITIAL = `<!DOCTYPE html>
 <html lang="en">
@@ -31,7 +34,13 @@ const INTERSTITIAL = `<!DOCTYPE html>
 export async function middleware(request: NextRequest) {
   if (process.env.AUTH_BYPASS === "1") return NextResponse.next();
   const { pathname } = request.nextUrl;
-  if (PUBLIC_PREFIXES.some((p) => pathname.startsWith(p))) return NextResponse.next();
+  // Trailing-slash entries are prefix matches; the rest match the path exactly
+  // (or a segment below it), so /api/healthcheck-of-mine could never sneak
+  // through on /api/health.
+  const isPublic = PUBLIC_PREFIXES.some((p) =>
+    p.endsWith("/") ? pathname.startsWith(p) : pathname === p || pathname.startsWith(`${p}/`)
+  );
+  if (isPublic) return NextResponse.next();
   // Machine consumers authenticate with x-redsign-key; the envelope routes
   // verify it against the hashed store (edge middleware can't reach Mongo).
   if (pathname.startsWith("/api/envelopes") && request.headers.get("x-redsign-key")) {

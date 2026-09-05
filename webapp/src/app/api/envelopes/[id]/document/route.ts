@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { Readable } from "node:stream";
 import { getDb } from "@/lib/db";
-import { authenticate } from "@/lib/apiauth";
+import { authenticate, ownsEnvelope } from "@/lib/apiauth";
 import { readPdf } from "@/lib/envelopes";
 
 // Serves the executed PDF once completed, else the original.
@@ -17,16 +17,23 @@ export async function GET(
     const db = await getDb();
     const e = await db.collection("envelopes").findOne({ _id: new ObjectId(id) });
     if (!e) return new NextResponse("Not found", { status: 404 });
-    if (who.kind === "consumer" && e.createdBy !== `consumer:${who.name}`) {
+    if (!ownsEnvelope(who, e)) {
       return new NextResponse("Not found", { status: 404 });
     }
     const fileId = e.executedFileId ?? e.documentFileId;
     const pdf = await readPdf(String(fileId));
     if (!pdf) return new NextResponse("File missing", { status: 404 });
+    // Digest of exactly these bytes, so a consumer can verify the archive it
+    // just wrote without a second round trip. Matches executedSha256 on the
+    // envelope, the audit record and the `completed` webhook.
+    const sha = e.executedFileId
+      ? (e.executedSha256 as string | null | undefined)
+      : (e.documentSha256 as string | null | undefined);
     return new NextResponse(Readable.toWeb(pdf.stream as Readable) as ReadableStream, {
       status: 200,
       headers: {
         "Content-Type": "application/pdf",
+        ...(sha ? { "X-RedSign-Sha256": sha } : {}),
         "Content-Disposition": `inline; filename="${encodeURIComponent(e.documentName ?? "document")}${e.executedFileId ? "-executed" : ""}.pdf"`,
       },
     });

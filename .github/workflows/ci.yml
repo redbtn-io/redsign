@@ -37,14 +37,15 @@ jobs:
           # Leave no usable git push token on disk for the code below to find.
           persist-credentials: false
 
-      # Node 22 is a floor, not a preference: `npm run test:unit` is
+      # Node 22.18 is the floor, not a preference: `npm run test:unit` is
       # `node --test 'src/**/*.test.ts'`, which needs both the test-runner glob
       # (Node 22+) and default TypeScript type-stripping (Node 22.18+). Node 20
       # fails outright — it cannot expand the glob and reports
-      # "Could not find '.../src/**/*.test.ts'".
+      # "Could not find '.../src/**/*.test.ts'". v0.2 pins 24, which is what the
+      # fleet runs and what the database tests are exercised on.
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
           cache-dependency-path: webapp/package-lock.json
 
@@ -108,6 +109,18 @@ jobs:
 
       - name: Unit tests
         run: npm run test:unit
+
+      # Database tests run against mongodb-memory-server ONLY. tests/db/harness.mjs
+      # aborts if MONGODB_URI is set, if the host is not loopback, or if the
+      # database is not named `test`, so a runner that happens to carry a real
+      # connection string in its environment fails the job instead of writing to
+      # a live redSign database. `env: MONGODB_URI: ''` makes that explicit here.
+      # The mongod binary is cached under ~/.cache/mongodb-binaries on the
+      # self-hosted runner after the first run.
+      - name: Database tests (mongodb-memory-server)
+        env:
+          MONGODB_URI: ''
+        run: npm run test:db
 
       # playwright.config.ts declares no `projects`, so the suite runs on the
       # default browser (Chromium) only. Installing just that browser keeps the

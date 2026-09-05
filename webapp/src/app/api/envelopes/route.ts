@@ -1,8 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { authenticate } from "@/lib/apiauth";
-import { mintToken, storePdf, validateFields, validateSigners } from "@/lib/envelopes";
+import { mintToken, sha256Hex, storePdf, validateFields, validateSigners } from "@/lib/envelopes";
 import { publicBase } from "@/lib/http";
+import {
+  defaultExpiryDays,
+  expiresInDaysToDate,
+  hashAccessCode,
+  metadataOrgId,
+  parseHostAllowlist,
+  platformOrgIdError,
+  resolveExpiresAt,
+  webhookUrlError,
+} from "@/lib/policy";
+import { ENVELOPE_LIST_PROJECTION } from "@/lib/queries";
 import { emitEnvelopeEvent } from "@/lib/webhooks";
 
 const MAX_PDF = 20 * 1024 * 1024;
@@ -18,7 +29,7 @@ export async function GET(req: NextRequest) {
     const db = await getDb();
     const envelopes = await db
       .collection("envelopes")
-      .find(filter, { projection: { "signers.token": 0 } })
+      .find(filter, { projection: ENVELOPE_LIST_PROJECTION })
       .sort({ createdAt: -1 })
       .limit(200)
       .toArray();
@@ -45,7 +56,14 @@ export async function POST(req: NextRequest) {
     if (file.type !== "application/pdf") return NextResponse.json({ error: "PDF only (v0)" }, { status: 400 });
     if (file.size > MAX_PDF) return NextResponse.json({ error: "20MB max" }, { status: 400 });
 
-    let payload: { signers?: unknown; fields?: unknown; metadata?: unknown; webhookUrl?: unknown };
+    let payload: {
+      signers?: unknown;
+      fields?: unknown;
+      metadata?: unknown;
+      webhookUrl?: unknown;
+      expiresAt?: unknown;
+      expiresInDays?: unknown;
+    };
     try {
       payload = JSON.parse(String(form.get("payload") ?? "{}"));
     } catch {
@@ -58,9 +76,26 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
     }
+    const metadata =
+      payload.metadata && typeof payload.metadata === "object"
+        ? (payload.metadata as Record<string, unknown>)
+        : {};
+
+    // Platform consumers (redOffice) are multi-tenant on one credential, so
+    // every envelope must name its tenant. See lib/policy.ts for the directory
+    // validation hook this leaves open.
+    if (who.kind === "consumer") {
+      const orgErr = platformOrgIdError(who, metadata);
+      if (orgErr) return NextResponse.json({ error: orgErr }, { status: 400 });
+    }
+
     const webhookUrl = payload.webhookUrl ? String(payload.webhookUrl).slice(0, 500) : null;
-    if (webhookUrl && !/^https?:\/\//.test(webhookUrl)) {
-      return NextResponse.json({ error: "webhookUrl must be http(s)" }, { status: 400 });
+    if (webhookUrl) {
+      const err = webhookUrlError(
+        webhookUrl,
+        parseHostAllowlist(process.env.REDSIGN_WEBHOOK_HOST_ALLOWLIST)
+      );
+      if (err) return NextResponse.json({ error: err }, { status: 400 });
     }
 
     const buf = Buffer.from(await file.arrayBuffer());
@@ -69,6 +104,24 @@ export async function POST(req: NextRequest) {
     }
 
     const now = new Date();
+
+    // Expiry applies to NEW envelopes only. Envelopes stored before v0.2 carry
+    // no expiresAt and lib/policy.isExpired treats a missing value as "never",
+    // so links already in people's inboxes keep working.
+    let expiresAt: Date | null;
+    try {
+      const fromDays = expiresInDaysToDate(payload.expiresInDays, now);
+      expiresAt =
+        fromDays !== undefined
+          ? fromDays
+          : resolveExpiresAt(
+              payload.expiresAt,
+              now,
+              defaultExpiryDays(process.env.REDSIGN_DEFAULT_EXPIRY_DAYS)
+            );
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 400 });
+    }
     const fileId = await storePdf(buf, file.name || "document.pdf", {
       kind: "original", uploadedBy: who.kind === "sender" ? who.email : `consumer:${who.name}`,
     });
@@ -77,21 +130,37 @@ export async function POST(req: NextRequest) {
       status: "sent" as const,
       documentFileId: fileId,
       documentName: file.name || "document.pdf",
+      // Digest of the exact uploaded bytes, recorded at send time so the
+      // certificate and the audit trail do not have to re-read GridFS to prove
+      // what was sent.
+      documentSha256: sha256Hex(buf),
       executedFileId: null as string | null,
-      signers: signers.map((s, idx) => ({
-        idx,
-        ...s,
-        token: mintToken(),
-        status: "pending" as const,
-        viewedAt: null as Date | null,
-        signedAt: null as Date | null,
-        consentAt: null as Date | null,
-        ip: null as string | null,
-        userAgent: null as string | null,
-      })),
+      executedSha256: null as string | null,
+      signers: signers.map((s, idx) => {
+        const token = mintToken();
+        const { accessCode, ...rest } = s;
+        return {
+          idx,
+          ...rest,
+          token,
+          // The plaintext code is never stored: it is HMACed with this
+          // signer's own token, so the digest is worthless without the link.
+          accessCodeHash: accessCode ? hashAccessCode(token, accessCode) : null,
+          status: "pending" as const,
+          viewedAt: null as Date | null,
+          signedAt: null as Date | null,
+          consentAt: null as Date | null,
+          consent: null as Record<string, unknown> | null,
+          ip: null as string | null,
+          ipChain: null as string | null,
+          userAgent: null as string | null,
+        };
+      }),
       fields,
-      metadata: payload.metadata && typeof payload.metadata === "object" ? payload.metadata : {},
+      metadata,
+      orgId: metadataOrgId(metadata) ?? (who.kind === "consumer" ? who.orgId : null),
       webhookUrl,
+      expiresAt,
       createdBy: who.kind === "sender" ? who.email : `consumer:${who.name}`,
       createdAt: now,
       sentAt: now,
@@ -106,7 +175,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json(
       {
         envelopeId: String(r.insertedId),
-        signers: doc.signers.map((s) => ({ idx: s.idx, signingUrl: `${base}/sign/${s.token}` })),
+        expiresAt: expiresAt ? expiresAt.toISOString() : null,
+        documentSha256: doc.documentSha256,
+        signers: doc.signers.map((s) => ({
+          idx: s.idx,
+          signingUrl: `${base}/sign/${s.token}`,
+          accessCodeRequired: Boolean(s.accessCodeHash),
+        })),
       },
       { status: 201 }
     );

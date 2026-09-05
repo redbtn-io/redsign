@@ -6,11 +6,45 @@ import {
   RETRY_BACKOFF_MS,
   buildWebhookBody,
   deliveryTransition,
+  isWebhookEvent,
   retryDelayMs,
   shouldMarkViewed,
   signBody,
   verifySignature,
 } from './webhooksig.ts';
+
+// --- v0.2: executedSha256 on the completed payload, consent is audit-only ---
+
+test('executedSha256 appears on the body only when supplied', () => {
+  const at = new Date('2026-09-05T00:00:00.000Z');
+  const withHash = buildWebhookBody({
+    event: 'completed',
+    envelopeId: 'e1',
+    at,
+    executedSha256: 'f'.repeat(64),
+    metadata: { orgId: 'org_1' },
+  });
+  assert.equal(
+    withHash,
+    '{"event":"completed","envelopeId":"e1","at":"2026-09-05T00:00:00.000Z","executedSha256":"' +
+      'f'.repeat(64) +
+      '","metadata":{"orgId":"org_1"}}'
+  );
+  // Absent, null and empty all keep the v0 body shape byte for byte, so a
+  // consumer verifying `sent` signatures sees no change.
+  const plain = '{"event":"sent","envelopeId":"e1","at":"2026-09-05T00:00:00.000Z","metadata":{}}';
+  assert.equal(buildWebhookBody({ event: 'sent', envelopeId: 'e1', at, metadata: {} }), plain);
+  assert.equal(
+    buildWebhookBody({ event: 'sent', envelopeId: 'e1', at, executedSha256: null, metadata: {} }),
+    plain
+  );
+});
+
+test('consent is an audit-only event and is never delivered', () => {
+  assert.equal(isWebhookEvent('completed'), true);
+  assert.equal(isWebhookEvent('viewed'), true);
+  assert.equal(isWebhookEvent('consent'), false);
+});
 
 // --- HMAC signature ---
 

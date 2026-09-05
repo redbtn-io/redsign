@@ -8,13 +8,13 @@ import { verifyConsumerKey } from "./envelopes";
 // present; this helper is the actual gate — every envelope route calls it.
 export type ApiIdentity =
   | { kind: "sender"; email: string }
-  | { kind: "consumer"; name: string };
+  | { kind: "consumer"; name: string; platform: boolean; orgId: string | null };
 
 export async function authenticate(req: NextRequest): Promise<ApiIdentity | null> {
   const key = req.headers.get("x-redsign-key");
   if (key) {
-    const name = await verifyConsumerKey(key);
-    return name ? { kind: "consumer", name } : null;
+    const consumer = await verifyConsumerKey(key);
+    return consumer ? { kind: "consumer", ...consumer } : null;
   }
   const secret = (process.env.JWT_SECRET ?? "").replace(/^"|"$/g, "");
   const token = req.cookies.get("red_session")?.value;
@@ -26,4 +26,12 @@ export async function authenticate(req: NextRequest): Promise<ApiIdentity | null
     } catch { /* fall through */ }
   }
   return null;
+}
+
+// Ownership rule, in one place: a consumer only ever sees the envelopes it
+// created; @redbtn.io senders see everything (there is exactly one sender
+// tenant in v0.2 — tenant senders are not part of this version).
+export function ownsEnvelope(who: ApiIdentity, envelope: Record<string, unknown>): boolean {
+  if (who.kind === "sender") return true;
+  return envelope.createdBy === `consumer:${who.name}`;
 }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
 import { getDb } from "@/lib/db";
-import { authenticate } from "@/lib/apiauth";
+import { authenticate, ownsEnvelope } from "@/lib/apiauth";
 import { publicBase } from "@/lib/http";
 
 // Signing links for an envelope's signers — the one read that intentionally
@@ -20,15 +20,30 @@ export async function GET(
     const db = await getDb();
     const e = await db.collection("envelopes").findOne({ _id: new ObjectId(id) });
     if (!e) return NextResponse.json({ error: "not found" }, { status: 404 });
-    if (who.kind === "consumer" && e.createdBy !== `consumer:${who.name}`) {
+    if (!ownsEnvelope(who, e)) {
       return NextResponse.json({ error: "not found" }, { status: 404 });
     }
     const base = publicBase(req.headers);
     return NextResponse.json(
       {
-        signers: (e.signers as Array<{ idx: number; name: string; status: string; token: string }>).map(
-          (s) => ({ idx: s.idx, name: s.name, status: s.status, signingUrl: `${base}/sign/${s.token}` })
-        ),
+        expiresAt: e.expiresAt ?? null,
+        signers: (
+          e.signers as Array<{
+            idx: number;
+            name: string;
+            status: string;
+            token: string;
+            accessCodeHash?: string | null;
+          }>
+        ).map((s) => ({
+          idx: s.idx,
+          name: s.name,
+          status: s.status,
+          signingUrl: `${base}/sign/${s.token}`,
+          // The code itself is never recoverable (it is HMACed with the
+          // token); the sender only learns whether one is set.
+          accessCodeRequired: Boolean(s.accessCodeHash),
+        })),
       },
       { headers: { "Cache-Control": "private, no-store" } }
     );

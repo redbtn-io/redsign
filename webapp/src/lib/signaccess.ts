@@ -2,6 +2,11 @@ import type { Db } from "mongodb";
 import { getDb } from "./db";
 import { isValidSigningToken, type TurnSigner } from "./signing";
 
+// tokenBlock lives in lib/policy.ts (which imports nothing but node builtins)
+// so the unit tests can reach it; re-exported here because the sign routes
+// think of it as part of token access.
+export { tokenBlock, type TokenBlock } from "./policy";
+
 // Shared lookup for the public /api/sign/[token]/* routes: the 48-hex token
 // IS the credential — resolve it to (envelope, signer) or nothing.
 
@@ -9,7 +14,26 @@ export type SignerDoc = TurnSigner & {
   token?: string;
   values?: Record<string, string>;
   viewedAt?: Date | null;
+  // v0.2
+  accessCodeHash?: string | null;
+  consent?: Record<string, unknown> | null;
+  consentAt?: Date | null;
+  ip?: string | null;
+  ipChain?: string | null;
+  userAgent?: string | null;
 };
+
+// Where a signer presents an access code. The header is what the signing page
+// sends; the query parameter exists because <embed src> and a PDF download
+// cannot carry a custom header.
+export const ACCESS_CODE_HEADER = "x-redsign-access-code";
+
+export function presentedAccessCode(req: {
+  headers: { get(name: string): string | null };
+  nextUrl?: { searchParams: URLSearchParams };
+}): string | null {
+  return req.headers.get(ACCESS_CODE_HEADER) ?? req.nextUrl?.searchParams.get("code") ?? null;
+}
 
 export type TokenHit = {
   db: Db;
@@ -22,6 +46,8 @@ export type TokenHit = {
     executedFileId: string | null;
     signers: SignerDoc[];
     fields: unknown[];
+    expiresAt?: Date | null;
+    metadata?: unknown;
   } & Record<string, unknown>;
   signer: SignerDoc;
 };

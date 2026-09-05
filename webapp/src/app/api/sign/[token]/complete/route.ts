@@ -1,9 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { ObjectId } from "mongodb";
-import { lookupEnvelopeByToken } from "@/lib/signaccess";
-import { readPdfBuffer, storePdf } from "@/lib/envelopes";
+import { lookupEnvelopeByToken, presentedAccessCode, tokenBlock } from "@/lib/signaccess";
+import { readPdfBuffer, sha256Hex, storePdf } from "@/lib/envelopes";
 import { buildExecutedPdf, type FlattenSigner } from "@/lib/flatten";
-import { firstHeaderValue } from "@/lib/http";
+import { clientIp } from "@/lib/http";
+import { accessCodeMatches } from "@/lib/policy";
+import { disclosureFor, disclosureKindFor, disclosureSha256 } from "@/lib/disclosures";
+import { signerCompletionFilter } from "@/lib/queries";
 import { emitEnvelopeEvent } from "@/lib/webhooks";
 import {
   MAX_TOTAL_VALUES_BYTES,
@@ -37,8 +40,10 @@ export async function POST(
     const hit = await lookupEnvelopeByToken(token);
     if (!hit) return NextResponse.json({ error: "not found" }, { status: 404 });
     const { db, envelope, signer } = hit;
-    if (envelope.status === "voided") {
-      return NextResponse.json({ error: "voided" }, { status: 404 });
+    const blocked = tokenBlock(envelope);
+    if (blocked) return NextResponse.json({ error: blocked }, { status: 404 });
+    if (!accessCodeMatches(signer, presentedAccessCode(req))) {
+      return NextResponse.json({ requiresAccessCode: true }, { status: 401 });
     }
 
     const { canSign, waitingOn } = signingTurn(envelope.status, envelope.signers, signer.idx);
@@ -92,24 +97,44 @@ export async function POST(
     }
 
     const now = new Date();
-    const ip = firstHeaderValue(req.headers.get("x-forwarded-for"));
+    // CF-Connecting-IP wins over the forwarded chain (Cloudflare sets it from
+    // the real peer and it cannot be spoofed through), and the whole chain is
+    // kept beside it so the recorded answer stays checkable.
+    const { ip, chain: ipChain, source: ipSource } = clientIp(req.headers);
     const userAgent = (req.headers.get("user-agent") ?? "").slice(0, 300) || null;
     const envelopeId = new ObjectId(String(envelope._id));
+
+    // Consent: if the signer already went through POST /consent, that earlier,
+    // separately timestamped record stands. Only a signer who reached this
+    // route without it (an older client) gets consent recorded inline, from
+    // the same disclosure text.
+    const disclosure = disclosureFor(disclosureKindFor(envelope.metadata));
+    const priorConsent = signer.consentAt ? signer.consent ?? null : null;
+    const consentRecord = priorConsent ?? {
+      at: now,
+      disclosureVersion: disclosure.version,
+      disclosureKind: disclosure.kind,
+      disclosureSha256: disclosureSha256(disclosure),
+      ip,
+      ipChain,
+      ipSource,
+      userAgent,
+      recordedAt: "complete", // no separate /consent call was made
+    };
+    const consentAt = signer.consentAt ?? now;
 
     // Atomic: only flips this signer if they are still pending on a sent
     // envelope — a concurrent double-submit loses here and 409s.
     const r = await db.collection("envelopes").updateOne(
-      {
-        _id: envelopeId,
-        status: "sent",
-        signers: { $elemMatch: { idx: signer.idx, status: "pending" } },
-      },
+      signerCompletionFilter(envelopeId, signer.idx),
       {
         $set: {
           "signers.$.status": "signed",
           "signers.$.signedAt": now,
-          "signers.$.consentAt": now,
+          "signers.$.consentAt": consentAt,
+          "signers.$.consent": consentRecord,
           "signers.$.ip": ip,
+          "signers.$.ipChain": ipChain,
           "signers.$.userAgent": userAgent,
           "signers.$.values": values,
         },
@@ -145,18 +170,24 @@ export async function POST(
             signers: fresh.signers as FlattenSigner[],
             completedAt,
           });
+          const executedBuf = Buffer.from(executed);
+          // Digest of the exact bytes GET /:id/document will now return. The
+          // consumer archiving that PDF verifies its own digest against this
+          // one, which reaches it over the HMAC-signed webhook rather than the
+          // same channel as the file.
+          const executedSha256 = sha256Hex(executedBuf);
           const executedFileId = await storePdf(
-            Buffer.from(executed),
+            executedBuf,
             `${String(fresh.documentName ?? "document").replace(/\.pdf$/i, "")}-executed.pdf`,
-            { kind: "executed", envelopeId: String(envelopeId) }
+            { kind: "executed", envelopeId: String(envelopeId), sha256: executedSha256 }
           );
           await db
             .collection("envelopes")
-            .updateOne({ _id: envelopeId }, { $set: { executedFileId } });
+            .updateOne({ _id: envelopeId }, { $set: { executedFileId, executedSha256 } });
           // Only the claim winner emits `completed`, and only after the
           // executed PDF exists — a consumer reacting to the webhook can
           // fetch /document and get the executed copy immediately.
-          await emitEnvelopeEvent(envelope, "completed", { at: completedAt });
+          await emitEnvelopeEvent(envelope, "completed", { at: completedAt, executedSha256 });
         } catch (e) {
           // Roll the claim back so the completion isn't half-recorded.
           await db

@@ -8,14 +8,22 @@
 
 const MAX_NEXT_LENGTH = 512;
 
-// NUL–US and DEL — header-splitting and log-forging territory.
-const CONTROL_CHARS = /[-]/;
+// NUL–US and DEL — header-splitting and log-forging territory. Checked by code
+// point rather than a regex literal, which would embed raw control characters
+// in the source (eslint no-control-regex).
+function hasControlChars(value: string): boolean {
+  for (let i = 0; i < value.length; i += 1) {
+    const code = value.charCodeAt(i);
+    if (code < 0x20 || code === 0x7f) return true;
+  }
+  return false;
+}
 
 /** A safe same-app relative path, or null when the value is unusable. */
 export function safeNextPath(raw: string | null | undefined): string | null {
   if (!raw) return null;
   if (raw.length > MAX_NEXT_LENGTH) return null;
-  if (CONTROL_CHARS.test(raw)) return null;
+  if (hasControlChars(raw)) return null;
   // A single leading slash means "this app". `//host` and `/\host` are how
   // browsers sneak an absolute URL through a path check.
   if (!raw.startsWith("/")) return null;

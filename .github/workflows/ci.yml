@@ -77,7 +77,7 @@ jobs:
           {
             printf '@redbtn:registry=https://registry.redbtn.io/\n'
             printf '//registry.redbtn.io/:username=%s\n' "$REDBTN_NPM_USER"
-            printf '//registry.redbtn.io/:_password=%s\n' "$REDBTN_NPM_PASSWORD"
+            printf '//registry.redbtn.io/:_password=%s\n' "$(printf '%s' "$REDBTN_NPM_PASSWORD" | base64 -w0)"
             printf '//registry.redbtn.io/:always-auth=true\n'
           } > .npmrc
 
